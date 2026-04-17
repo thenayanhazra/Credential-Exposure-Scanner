@@ -1,0 +1,10 @@
+# credscan example config. Copy to ~/.config/credscan/config.toml and edit.
+
+[scanners.github_search]
+# Free GitHub personal access token (no scopes needed for public search).
+# Alternatively set GITHUB_TOKEN environment variable.
+# token = "ghp_your_token_here"
+
+[scanners.hibp]
+# Paid: $3.50/mo from https://haveibeenpwned.com/API/Key
+# api_key = "your_hibp_api_key"

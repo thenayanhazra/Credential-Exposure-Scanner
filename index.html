@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>credscan</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #161b22;
+    --panel-2: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-hover: #4493f8;
+    --critical: #f85149;
+    --high: #ff7b72;
+    --medium: #d29922;
+    --low: #58a6ff;
+    --info: #8b949e;
+    --ok: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .container { max-width: 1080px; margin: 0 auto; padding: 2rem 1.5rem; }
+  header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 0.5rem; }
+  h1 { margin: 0; font-size: 1.75rem; letter-spacing: -0.01em; }
+  h1 .dot { color: var(--accent); }
+  .tagline { color: var(--muted); margin: 0 0 2rem 0; font-size: 0.95rem; }
+
+  .scanners-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1.5rem; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    background: var(--panel); border: 1px solid var(--border);
+    padding: 0.25rem 0.6rem; border-radius: 999px;
+    font-size: 0.8rem; color: var(--muted);
+  }
+  .chip .sig { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+  .chip.on { color: var(--text); }
+  .chip.on .sig { background: var(--ok); }
+
+  form#scan-form {
+    display: flex; gap: 0.5rem; margin-bottom: 1.5rem;
+    background: var(--panel); padding: 0.5rem;
+    border: 1px solid var(--border); border-radius: 8px;
+  }
+  input[type=text] {
+    flex: 1;
+    background: transparent; color: var(--text);
+    border: none; outline: none;
+    padding: 0.7rem 0.8rem; font-size: 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  input[type=text]::placeholder { color: var(--muted); }
+  button {
+    background: var(--accent); color: #0b0f14;
+    border: none; border-radius: 6px;
+    padding: 0.6rem 1.4rem; font-size: 0.95rem; font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover:not(:disabled) { background: var(--accent-hover); }
+  button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  .status { margin: 0 0 1rem 0; padding: 0.7rem 0.9rem; border-radius: 6px; font-size: 0.9rem; }
+  .status.running { background: rgba(88,166,255,0.1); color: var(--accent); border: 1px solid rgba(88,166,255,0.3); }
+  .status.error   { background: rgba(248,81,73,0.1);  color: var(--critical); border: 1px solid rgba(248,81,73,0.3); }
+  .status.done    { background: rgba(63,185,80,0.08); color: var(--ok);       border: 1px solid rgba(63,185,80,0.3); }
+
+  .spinner {
+    display: inline-block; width: 12px; height: 12px;
+    border: 2px solid currentColor; border-right-color: transparent;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    vertical-align: middle; margin-right: 0.4rem;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 0.65rem 0.85rem; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.88rem; vertical-align: top; }
+  th { background: var(--panel-2); color: var(--muted); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--panel-2); }
+
+  .sev {
+    display: inline-block; padding: 0.12rem 0.5rem;
+    border-radius: 3px; font-size: 0.7rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .sev-critical { background: rgba(248,81,73,0.15); color: var(--critical); }
+  .sev-high     { background: rgba(255,123,114,0.15); color: var(--high); }
+  .sev-medium   { background: rgba(210,153,34,0.15); color: var(--medium); }
+  .sev-low      { background: rgba(88,166,255,0.15); color: var(--low); }
+  .sev-info     { background: rgba(139,148,158,0.15); color: var(--info); }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  details { margin-top: 0.4rem; }
+  details summary {
+    cursor: pointer; color: var(--muted); font-size: 0.8rem;
+    user-select: none;
+  }
+  details[open] summary { color: var(--accent); }
+  details pre {
+    background: var(--bg); padding: 0.6rem; margin: 0.4rem 0 0 0;
+    border: 1px solid var(--border); border-radius: 4px;
+    font-size: 0.78rem; overflow-x: auto; max-height: 300px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  .section-title {
+    font-size: 0.8rem; text-transform: uppercase;
+    color: var(--muted); letter-spacing: 0.05em;
+    margin: 2.5rem 0 0.8rem 0; font-weight: 600;
+  }
+  .empty {
+    padding: 2rem; text-align: center; color: var(--muted);
+    background: var(--panel); border: 1px dashed var(--border); border-radius: 8px;
+  }
+  .notice {
+    margin-top: 2rem; padding: 0.8rem 1rem;
+    background: rgba(210,153,34,0.07);
+    border: 1px solid rgba(210,153,34,0.3);
+    border-radius: 6px; color: #e3b341;
+    font-size: 0.82rem;
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: var(--panel-2); padding: 1px 5px; border-radius: 3px; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header><h1>credscan<span class="dot">.</span></h1></header>
+  <p class="tagline">Scan an email or domain you own for credential exposures.</p>
+
+  <div class="scanners-row">
+    {% for s in scanner_status %}
+      <span class="chip {% if s.enabled %}on{% endif %}"
+            title="{{ 'enabled' if s.enabled else ('disabled (needs credentials)' if s.requires_auth else 'disabled') }}">
+        <span class="sig"></span>{{ s.name }}
+      </span>
+    {% endfor %}
+  </div>
+
+  <form id="scan-form" autocomplete="off">
+    <input type="text" name="target" id="target"
+           placeholder="user@example.com  or  example.com"
+           required autofocus spellcheck="false">
+    <button type="submit" id="submit-btn">Scan</button>
+  </form>
+
+  <div id="status"></div>
+  <div id="results"></div>
+
+  <div class="section-title">Recent scans</div>
+  {% if scans %}
+    <table>
+      <thead><tr><th>Target</th><th>Started</th><th>Status</th><th>Findings</th></tr></thead>
+      <tbody>
+      {% for s in scans %}
+        <tr>
+          <td><code>{{ s.target }}</code></td>
+          <td style="color: var(--muted); font-size: 0.82rem;">{{ s.started_at }}</td>
+          <td>{{ s.status }}</td>
+          <td>{{ s.finding_count }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty">No scans yet.</div>
+  {% endif %}
+
+  <div class="notice">
+    <strong>Responsible use:</strong> Only scan domains and email addresses you
+    own or have written authorization to scan. Some scanners query third-party
+    services that may log your queries.
+  </div>
+</div>
+
+<script>
+const form = document.getElementById('scan-form');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const btn = document.getElementById('submit-btn');
+const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const target = document.getElementById('target').value.trim();
+  if (!target) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+  statusEl.innerHTML = '<div class="status running"><span class="spinner"></span>Scanning <code>' +
+                       escapeHtml(target) + '</code>. This may take up to a minute.</div>';
+  resultsEl.innerHTML = '';
+
+  try {
+    const fd = new FormData();
+    fd.append('target', target);
+    const resp = await fetch('/scan', { method: 'POST', body: fd });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      statusEl.innerHTML = '<div class="status error">' +
+                           escapeHtml(data.error || 'Scan failed') + '</div>';
+      return;
+    }
+
+    const findings = data.findings || [];
+    const scannersRun = (data.scanners_run || []).join(', ') || 'none';
+    statusEl.innerHTML = '<div class="status done">Scan complete. ' +
+                         findings.length + ' finding(s) from: ' +
+                         escapeHtml(scannersRun) + '.</div>';
+
+    if (findings.length === 0) {
+      resultsEl.innerHTML = '<div class="empty">No exposures found.</div>';
+      return;
+    }
+
+    findings.sort((a, b) =>
+      SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity));
+
+    let html = '<table><thead><tr>' +
+               '<th>Severity</th><th>Source</th><th>Type</th>' +
+               '<th>Title</th><th>Evidence</th></tr></thead><tbody>';
+    for (const f of findings) {
+      html += '<tr>';
+      html += '<td><span class="sev sev-' + escapeHtml(f.severity) + '">' +
+              escapeHtml(f.severity) + '</span></td>';
+      html += '<td><code>' + escapeHtml(f.source) + '</code></td>';
+      html += '<td><code>' + escapeHtml(f.kind) + '</code></td>';
+      html += '<td>' + escapeHtml(f.title);
+      if (f.raw && Object.keys(f.raw).length) {
+        html += '<details><summary>raw</summary><pre>' +
+                escapeHtml(JSON.stringify(f.raw, null, 2)) + '</pre></details>';
+      }
+      html += '</td>';
+      html += '<td>' + (f.evidence_url
+        ? '<a href="' + escapeHtml(f.evidence_url) + '" target="_blank" rel="noopener">link</a>'
+        : '') + '</td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    resultsEl.innerHTML = html;
+  } catch (err) {
+    statusEl.innerHTML = '<div class="status error">Error: ' +
+                         escapeHtml(err.message) + '</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Scan';
+  }
+});
+</script>
+</body>
+</html>
