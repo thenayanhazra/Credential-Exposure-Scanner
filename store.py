@@ -1,4 +1,14 @@
-"""SQLite-backed findings and scan-history store."""
+"""SQLite-backed findings and scan-history store.
+
+Schema notes
+------------
+- `findings` carries a `severity_rank` denormalized integer column. The app
+  supplies it from `Severity.rank` at write time, so sorting is a plain
+  ORDER BY — no SQL `CASE` duplicating the enum ordering.
+- Upsert is a single `INSERT ... ON CONFLICT(dedup_key) DO UPDATE`, which
+  refreshes all mutable fields (title, severity, raw) while preserving
+  `first_seen` via the table default.
+"""
 from __future__ import annotations
 
 import json
@@ -7,24 +17,25 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .models import Finding
+from .models import Finding, Severity
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS findings (
-    dedup_key     TEXT PRIMARY KEY,
-    source        TEXT NOT NULL,
-    target        TEXT NOT NULL,
-    kind          TEXT NOT NULL,
-    severity      TEXT NOT NULL,
-    title         TEXT NOT NULL,
-    evidence_url  TEXT,
-    evidence_hash TEXT,
-    raw_json      TEXT,
-    first_seen    TEXT NOT NULL,
-    last_seen     TEXT NOT NULL
+    dedup_key      TEXT PRIMARY KEY,
+    source         TEXT NOT NULL,
+    target         TEXT NOT NULL,
+    kind           TEXT NOT NULL,
+    severity       TEXT NOT NULL,
+    severity_rank  INTEGER NOT NULL,
+    title          TEXT NOT NULL,
+    evidence_url   TEXT,
+    evidence_hash  TEXT,
+    raw_json       TEXT,
+    first_seen     TEXT NOT NULL,
+    last_seen      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_findings_target   ON findings(target);
-CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
+CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity_rank);
 
 CREATE TABLE IF NOT EXISTS scans (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,6 +46,31 @@ CREATE TABLE IF NOT EXISTS scans (
     finding_count  INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_scans_target ON scans(target);
+"""
+
+# INSERT; on conflict, do nothing. rowcount tells us whether we inserted.
+_INSERT_SQL = """
+INSERT INTO findings
+    (dedup_key, source, target, kind, severity, severity_rank, title,
+     evidence_url, evidence_hash, raw_json, first_seen, last_seen)
+VALUES
+    (:dedup_key, :source, :target, :kind, :severity, :severity_rank, :title,
+     :evidence_url, :evidence_hash, :raw_json, :first_seen, :last_seen)
+ON CONFLICT(dedup_key) DO NOTHING
+"""
+
+# Refresh mutable fields when the row already existed. first_seen is never
+# overwritten.
+_UPDATE_SQL = """
+UPDATE findings
+SET severity      = :severity,
+    severity_rank = :severity_rank,
+    title         = :title,
+    evidence_url  = :evidence_url,
+    evidence_hash = :evidence_hash,
+    raw_json      = :raw_json,
+    last_seen     = :last_seen
+WHERE dedup_key = :dedup_key
 """
 
 
@@ -56,48 +92,38 @@ class Store:
     # --- findings ---
 
     def upsert(self, f: Finding) -> bool:
-        """Insert or refresh a finding. Returns True if this is a new row."""
-        key = f.dedup_key()
-        row = self.conn.execute(
-            "SELECT dedup_key FROM findings WHERE dedup_key = ?", (key,)
-        ).fetchone()
-        is_new = row is None
+        """Insert or refresh a finding. Returns True if this is a new row.
 
-        if is_new:
-            self.conn.execute(
-                """INSERT INTO findings
-                   (dedup_key, source, target, kind, severity, title,
-                    evidence_url, evidence_hash, raw_json, first_seen, last_seen)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    key,
-                    f.source,
-                    f.target,
-                    f.kind,
-                    f.severity.value,
-                    f.title,
-                    f.evidence_url,
-                    f.evidence_hash,
-                    json.dumps(f.raw, default=str),
-                    f.first_seen.isoformat(),
-                    f.last_seen.isoformat(),
-                ),
-            )
-        else:
-            self.conn.execute(
-                "UPDATE findings SET last_seen = ?, raw_json = ? WHERE dedup_key = ?",
-                (f.last_seen.isoformat(), json.dumps(f.raw, default=str), key),
-            )
+        Attempts INSERT; on conflict, falls through to UPDATE. In the
+        inserted-fresh case that's one statement; in the refresh case it's
+        two. first_seen is never overwritten.
+        """
+        sev = Severity(f.severity)
+        params = {
+            "dedup_key": f.dedup_key(),
+            "source": f.source,
+            "target": f.target,
+            "kind": f.kind,
+            "severity": sev.value,
+            "severity_rank": sev.rank,
+            "title": f.title,
+            "evidence_url": f.evidence_url,
+            "evidence_hash": f.evidence_hash,
+            "raw_json": json.dumps(f.raw, default=str),
+            "first_seen": f.first_seen.isoformat(),
+            "last_seen": f.last_seen.isoformat(),
+        }
+        cur = self.conn.execute(_INSERT_SQL, params)
+        inserted = cur.rowcount > 0
+        if not inserted:
+            self.conn.execute(_UPDATE_SQL, params)
         self.conn.commit()
-        return is_new
+        return inserted
 
     def findings_for(self, target: str) -> list[dict[str, Any]]:
         cur = self.conn.execute(
             "SELECT * FROM findings WHERE target = ? "
-            "ORDER BY CASE severity "
-            "  WHEN 'critical' THEN 0 WHEN 'high' THEN 1 "
-            "  WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, "
-            "last_seen DESC",
+            "ORDER BY severity_rank ASC, last_seen DESC",
             (target,),
         )
         return [self._row_to_dict(r) for r in cur.fetchall()]

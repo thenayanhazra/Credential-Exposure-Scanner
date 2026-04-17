@@ -1,4 +1,4 @@
-"""Data models for targets and findings."""
+"""Data models for targets, findings, and scan results."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -36,8 +36,15 @@ class Severity(StrEnum):
     HIGH = "high"
     CRITICAL = "critical"
 
+    @property
+    def rank(self) -> int:
+        """Sort rank — lower means more urgent. Single source of truth."""
+        return _SEVERITY_RANK[self]
 
-SEVERITY_ORDER = {
+
+# Authoritative severity ordering. SQL and UI code reference this,
+# never hardcode their own.
+_SEVERITY_RANK: dict[Severity, int] = {
     Severity.CRITICAL: 0,
     Severity.HIGH: 1,
     Severity.MEDIUM: 2,
@@ -64,3 +71,21 @@ class Finding(BaseModel):
         """Stable key for upsert/dedup."""
         parts = f"{self.source}|{self.target}|{self.kind}|{self.evidence_url or ''}"
         return sha256(parts.encode("utf-8")).hexdigest()
+
+
+class ScanResult(BaseModel):
+    """The outcome of a single scan run. Shared shape for CLI, web, and tests."""
+
+    target: str
+    scan_id: int
+    scanners_run: list[str]
+    findings: list[Finding]
+
+    def to_public_dict(self) -> dict[str, Any]:
+        """Serialize for JSON APIs (findings rendered via Pydantic json mode)."""
+        return {
+            "target": self.target,
+            "scan_id": self.scan_id,
+            "scanners_run": self.scanners_run,
+            "findings": [f.model_dump(mode="json") for f in self.findings],
+        }

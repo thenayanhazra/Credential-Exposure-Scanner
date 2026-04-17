@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+from .. import USER_AGENT
 from ..models import Finding, Severity, Target, TargetKind
 from .base import Scanner
 
@@ -33,7 +34,7 @@ class HIBPScanner(Scanner):
             return
         headers = {
             "hibp-api-key": key,
-            "User-Agent": "credscan/0.1",
+            "User-Agent": USER_AGENT,
         }
         url = self.API.format(account=target.value)
         async with httpx.AsyncClient(timeout=20.0, headers=headers) as client:

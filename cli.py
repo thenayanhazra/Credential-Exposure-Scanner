@@ -4,22 +4,17 @@ from __future__ import annotations
 import asyncio
 import json as jsonlib
 import logging
-import os
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from .config import DEFAULT_DB_PATH, load_config, scanner_config
-from .models import SEVERITY_ORDER, Severity
+from .config import default_db_path, load_config
+from .models import Severity
 from .normalize import NormalizeError, normalize
 from .runner import Runner
-from .scanners.base import Scanner
-from .scanners.crtsh import CrtShScanner
-from .scanners.dorks import DorkScanner
-from .scanners.github_search import GitHubSearchScanner
-from .scanners.hibp import HIBPScanner
+from .scanners.registry import build_scanners
 from .store import Store
 
 app = typer.Typer(
@@ -28,16 +23,6 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
-
-
-def build_scanners(cfg: dict) -> list[Scanner]:
-    return [
-        CrtShScanner(scanner_config("crtsh", cfg)),
-        GitHubSearchScanner(scanner_config("github_search", cfg)),
-        DorkScanner(scanner_config("dorks", cfg)),
-        HIBPScanner(scanner_config("hibp", cfg)),
-    ]
-
 
 SEV_COLORS = {
     Severity.CRITICAL: "bright_red",
@@ -48,11 +33,15 @@ SEV_COLORS = {
 }
 
 
+def _db_option() -> Path:
+    return default_db_path()
+
+
 @app.command()
 def scan(
     target_input: str = typer.Argument(..., help="Email or domain to scan."),
     output: str = typer.Option("table", "--output", "-o", help="table | json"),
-    db: Path = typer.Option(DEFAULT_DB_PATH, "--db", help="SQLite DB path."),
+    db: Path | None = typer.Option(None, "--db", help="SQLite DB path."),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Scan an email or domain for credential exposures."""
@@ -67,49 +56,40 @@ def scan(
         console.print(f"[red]Invalid input:[/red] {e}")
         raise typer.Exit(1) from None
 
+    db_path = db or default_db_path()
     cfg = load_config()
-    store = Store(db)
     scanners = build_scanners(cfg)
-    runner = Runner(scanners, store)
-    applicable = [s.name for s in runner.applicable(target)]
 
-    if output != "json":
-        console.print(
-            f"[bold cyan]Scanning[/bold cyan] {target.value}  "
-            f"[dim](scanners: {', '.join(applicable) or 'none'})[/dim]"
-        )
-        disabled = [s.name for s in scanners if s.requires_auth and not s.enabled()]
-        if disabled:
+    with Store(db_path) as store:
+        runner = Runner(scanners, store)
+        applicable = [s.name for s in runner.applicable(target)]
+
+        if output != "json":
             console.print(
-                f"[dim]Skipping (no credentials configured): "
-                f"{', '.join(disabled)}[/dim]"
+                f"[bold cyan]Scanning[/bold cyan] {target.value}  "
+                f"[dim](scanners: {', '.join(applicable) or 'none'})[/dim]"
             )
+            disabled = [s.name for s in scanners if s.requires_auth and not s.enabled()]
+            if disabled:
+                console.print(
+                    f"[dim]Skipping (no credentials configured): "
+                    f"{', '.join(disabled)}[/dim]"
+                )
 
-    result = asyncio.run(runner.run(target))
-    findings = result["findings"]
+        result = asyncio.run(runner.run(target))
 
     if output == "json":
-        print(
-            jsonlib.dumps(
-                {
-                    "target": result["target"],
-                    "scan_id": result["scan_id"],
-                    "scanners_run": result["scanners_run"],
-                    "findings": [f.model_dump(mode="json") for f in findings],
-                },
-                indent=2,
-                default=str,
-            )
-        )
-        store.close()
+        # Plain stdout write — Rich's console.print_json would reformat and
+        # mangle piping. jsonlib.dumps keeps output machine-readable.
+        print(jsonlib.dumps(result.to_public_dict(), indent=2, default=str))
         return
 
+    findings = result.findings
     if not findings:
         console.print("[green]No findings.[/green]")
-        store.close()
         return
 
-    findings.sort(key=lambda f: SEVERITY_ORDER[f.severity])
+    findings.sort(key=lambda f: f.severity.rank)
     table = Table(title=f"Findings for {target.value}")
     table.add_column("Severity", style="bold")
     table.add_column("Source")
@@ -126,39 +106,39 @@ def scan(
             f.title,
             f.evidence_url or "",
         )
-
     console.print(table)
-    store.close()
 
 
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8765, "--port"),
-    db: Path = typer.Option(DEFAULT_DB_PATH, "--db"),
+    db: Path | None = typer.Option(None, "--db"),
 ) -> None:
     """Start the local web GUI at http://HOST:PORT."""
     import uvicorn
 
     from .web import create_app
 
-    os.environ["CREDSCAN_DB"] = str(db)
+    db_path = db or default_db_path()
     console.print(f"[cyan]credscan[/cyan] web GUI at http://{host}:{port}")
-    uvicorn.run(create_app(), host=host, port=port, log_level="warning")
+    uvicorn.run(create_app(db_path=db_path), host=host, port=port, log_level="warning")
 
 
 @app.command()
 def history(
     limit: int = typer.Option(20, "--limit", "-n"),
-    db: Path = typer.Option(DEFAULT_DB_PATH, "--db"),
+    db: Path | None = typer.Option(None, "--db"),
 ) -> None:
     """Show recent scan history."""
-    store = Store(db)
-    scans = store.recent_scans(limit=limit)
+    db_path = db or default_db_path()
+    with Store(db_path) as store:
+        scans = store.recent_scans(limit=limit)
+
     if not scans:
         console.print("[dim]no scans yet[/dim]")
-        store.close()
         return
+
     table = Table(title="Recent scans")
     table.add_column("ID")
     table.add_column("Target")
@@ -174,7 +154,6 @@ def history(
             str(s["finding_count"]),
         )
     console.print(table)
-    store.close()
 
 
 if __name__ == "__main__":

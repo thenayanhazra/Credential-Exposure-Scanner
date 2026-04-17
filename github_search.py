@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+from .. import USER_AGENT
 from ..models import Finding, Severity, Target
 from .base import Scanner
 
@@ -54,7 +55,7 @@ class GitHubSearchScanner(Scanner):
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {token}",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "credscan/0.1",
+            "User-Agent": USER_AGENT,
         }
         query = f'"{target.domain}"'
 

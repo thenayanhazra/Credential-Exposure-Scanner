@@ -60,6 +60,30 @@ class TestUpsert:
         assert len(rows) == 1
         assert "2025" in rows[0]["last_seen"]
 
+    def test_reinsert_refreshes_mutable_fields(self, store):
+        """title, severity, and raw should update on reinsert; first_seen should not."""
+        original_first_seen = datetime(2024, 1, 1, tzinfo=UTC)
+        store.upsert(_mk_finding(
+            first_seen=original_first_seen,
+            severity=Severity.LOW,
+            title="original title",
+            raw={"v": 1},
+        ))
+        store.upsert(_mk_finding(
+            first_seen=datetime(2025, 1, 1, tzinfo=UTC),  # should be ignored
+            severity=Severity.CRITICAL,
+            title="updated title",
+            raw={"v": 2},
+        ))
+        rows = store.findings_for("domain:example.com")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["severity"] == "critical"
+        assert row["title"] == "updated title"
+        assert row["raw"] == {"v": 2}
+        # first_seen preserved from the original insert
+        assert row["first_seen"].startswith("2024-01-01")
+
 
 class TestFindingsFor:
     def test_empty_store(self, store):

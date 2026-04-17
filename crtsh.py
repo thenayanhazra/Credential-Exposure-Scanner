@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+from .. import USER_AGENT
 from ..models import Finding, Severity, Target, TargetKind
 from .base import Scanner
 
@@ -20,7 +21,7 @@ class CrtShScanner(Scanner):
         params = {"q": f"%.{target.domain}", "output": "json"}
         async with httpx.AsyncClient(
             timeout=30.0,
-            headers={"User-Agent": "credscan/0.1"},
+            headers={"User-Agent": USER_AGENT},
         ) as client:
             try:
                 resp = await client.get(self.BASE_URL, params=params)

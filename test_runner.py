@@ -61,8 +61,8 @@ async def test_runs_applicable_and_aggregates(store):
     s2 = _FakeScanner("s2", [_finding("s2", "c")])
     runner = Runner([s1, s2], store)
     result = await runner.run(_target())
-    assert len(result["findings"]) == 3
-    assert set(result["scanners_run"]) == {"s1", "s2"}
+    assert len(result.findings) == 3
+    assert set(result.scanners_run) == {"s1", "s2"}
 
 
 async def test_skips_disabled(store):
@@ -70,8 +70,8 @@ async def test_skips_disabled(store):
     s2 = _FakeScanner("s2", [_finding("s2")])
     runner = Runner([s1, s2], store)
     result = await runner.run(_target())
-    assert result["scanners_run"] == ["s2"]
-    assert len(result["findings"]) == 1
+    assert result.scanners_run == ["s2"]
+    assert len(result.findings) == 1
 
 
 async def test_skips_unsupported(store):
@@ -79,7 +79,7 @@ async def test_skips_unsupported(store):
     s2 = _FakeScanner("s2", [_finding("s2")])
     runner = Runner([s1, s2], store)
     result = await runner.run(_target())
-    assert result["scanners_run"] == ["s2"]
+    assert result.scanners_run == ["s2"]
 
 
 async def test_scanner_exception_does_not_break_others(store):
@@ -87,8 +87,8 @@ async def test_scanner_exception_does_not_break_others(store):
     s2 = _FakeScanner("good", [_finding("good")])
     runner = Runner([s1, s2], store)
     result = await runner.run(_target())
-    assert len(result["findings"]) == 1
-    assert result["findings"][0].source == "good"
+    assert len(result.findings) == 1
+    assert result.findings[0].source == "good"
 
 
 async def test_findings_persisted(store):
@@ -113,7 +113,7 @@ async def test_no_applicable_scanners(store):
     s = _FakeScanner("s", [_finding("s")], supports=False)
     runner = Runner([s], store)
     result = await runner.run(_target())
-    assert result["findings"] == []
-    assert result["scanners_run"] == []
+    assert result.findings == []
+    assert result.scanners_run == []
     scans = store.recent_scans()
     assert scans[0]["status"] == "no_scanners"

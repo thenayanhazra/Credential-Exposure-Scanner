@@ -6,8 +6,10 @@ leads to investigate, not confirmed exposures.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import AsyncIterator
+from urllib.parse import urlencode
 
 import httpx
 
@@ -24,7 +26,17 @@ DORK_TEMPLATES = [
     '"{domain}" "DB_PASSWORD"',
 ]
 
-LINK_RE = re.compile(r'<a[^>]+class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"', re.IGNORECASE)
+LINK_RE = re.compile(
+    r'<a[^>]+class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"', re.IGNORECASE
+)
+
+# Browser-looking UA; DDG's HTML endpoint 403s on obvious bot UAs.
+BROWSER_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+)
+
+INTER_QUERY_DELAY = 0.4  # seconds; be polite
 
 
 class DorkScanner(Scanner):
@@ -35,16 +47,13 @@ class DorkScanner(Scanner):
         return True
 
     async def scan(self, target: Target) -> AsyncIterator[Finding]:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
-            ),
-        }
+        headers = {"User-Agent": BROWSER_UA}
         async with httpx.AsyncClient(
             timeout=20.0, follow_redirects=True, headers=headers
         ) as client:
-            for template in DORK_TEMPLATES:
+            for i, template in enumerate(DORK_TEMPLATES):
+                if i > 0:
+                    await asyncio.sleep(INTER_QUERY_DELAY)
                 query = template.format(domain=target.domain)
                 try:
                     resp = await client.get(self.ENDPOINT, params={"q": query})
@@ -52,14 +61,7 @@ class DorkScanner(Scanner):
                     continue
                 if resp.status_code != 200:
                     continue
-                hits = LINK_RE.findall(resp.text)
-                # De-duplicate while preserving order
-                seen: set[str] = set()
-                unique_hits: list[str] = []
-                for h in hits:
-                    if h not in seen:
-                        seen.add(h)
-                        unique_hits.append(h)
+                unique_hits = _unique(LINK_RE.findall(resp.text))
                 if not unique_hits:
                     continue
                 yield Finding(
@@ -68,6 +70,17 @@ class DorkScanner(Scanner):
                     kind="search_hit",
                     severity=Severity.LOW,
                     title=f"Search hits for: {query}",
-                    evidence_url=f"https://duckduckgo.com/?q={httpx.QueryParams({'q': query})}",
+                    evidence_url="https://duckduckgo.com/?" + urlencode({"q": query}),
                     raw={"query": query, "hits": unique_hits[:10]},
                 )
+
+
+def _unique(items: list[str]) -> list[str]:
+    """Dedup while preserving order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for x in items:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
