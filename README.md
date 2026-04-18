@@ -1,146 +1,98 @@
-# credscan
+# Credential Exposure Scanner
 
-Self-hosted credential exposure scanner. Input an email or domain you own; credscan queries free OSINT sources for leaks, exposed secrets, and subdomain sprawl, then stores findings in a local SQLite database.
+Credential Exposure Scanner is a focused OSINT-style scanner for domains and email addresses. It is built to surface public evidence of exposure, separate confirmed findings from weak leads, and keep the storage layer free from raw credential material.
 
-**Status**: alpha. Free scanners are functional; paid sources (HIBP) are stubbed behind a config flag and activate automatically when you add an API key.
+## What it does
 
-## What it scans for
+- Accepts a domain or email address as input
+- Normalizes the target into a canonical form
+- Runs multiple internet-facing scanners
+- Distinguishes between confirmed exposure, unverified leads, and asset intelligence
+- Stores findings in SQLite with deduplication and scan history
+- Provides both a CLI and a small local web UI
 
-| Scanner | What it finds | Cost | Auth |
-|---|---|---|---|
-| `crtsh` | Subdomains from certificate transparency logs | Free | None |
-| `github_search` | Secrets (AWS/GitHub/Slack/OpenAI keys, private keys, password literals) in public code that mentions your domain | Free | GitHub PAT |
-| `dorks` | Pastebin, gist, exposed `.env` and log files matching your domain | Free | None |
-| `hibp` | Breached accounts | $3.50/mo | HIBP API key |
+## Current scanner classes
 
-Add a GitHub PAT (the cheapest and most valuable addition) by exporting `GITHUB_TOKEN` or adding it to the config file.
+- `crtsh`: certificate-transparency-derived subdomain intelligence
+- `github_search`: public code search for target-linked secret exposure indicators
+- `hibp`: Have I Been Pwned email breach lookups when an API key is configured
+- `dorks`: search-engine lead collection
+- `lead_fetch`: fetch-and-classify stage for lead URLs
+- `exact_email_search`: exact email public reference checks
 
-## Install
+## Finding model
+
+Every finding carries:
+
+- `exposure_type`: `breach_exposure`, `public_secret_exposure`, `artifact_lead`, or `asset_intelligence`
+- `verification_state`: `verified`, `unverified`, or `discarded`
+- `severity`
+- `confidence`
+- sanitized evidence metadata
+
+## Installation
 
 ```bash
-git clone https://github.com/yourname/credscan.git
-cd credscan
-pip install -e ".[dev]"
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
 
-Requires Python 3.11+.
+## Configure
+
+Copy the example config and edit it:
+
+```bash
+cp config.example.toml ~/.config/credscan/config.toml
+```
 
 ## Usage
 
-### CLI
+Scan a target:
 
 ```bash
-# Scan a domain
 credscan scan example.com
+credscan scan alice@example.com --output json
+```
 
-# Scan an email
-credscan scan user@example.com
+Run the local web UI:
 
-# JSON output (pipeable)
-credscan scan example.com --output json
+```bash
+credscan serve --host 127.0.0.1 --port 8765
+```
 
-# Scan history
+View recent scan history:
+
+```bash
 credscan history
 ```
 
-### Web GUI
+## Repository layout
 
-```bash
-credscan serve
-# then open http://127.0.0.1:8765
+```text
+src/credscan/
+  cli.py
+  config.py
+  evidence.py
+  models.py
+  normalize.py
+  registry.py
+  runner.py
+  scoring.py
+  store.py
+  taxonomy.py
+  verification.py
+  web/
+  scanners/
 ```
 
-The GUI shows which scanners are enabled, accepts domain or email input, runs the scan, and displays findings sorted by severity. Scan history is persisted across restarts.
+## Design constraints
 
-## Configuration
+- No raw credential storage
+- Verification and scoring are centralized rather than embedded inside each scanner
+- Search-engine hits are treated as leads until fetched and classified
+- Asset discovery is stored separately from exposure findings
 
-Default config path: `~/.config/credscan/config.toml` (override with `CREDSCAN_CONFIG_DIR`).
+## Notes
 
-```toml
-[scanners.github_search]
-token = "ghp_your_token_here"
-
-[scanners.hibp]
-api_key = "your_hibp_key"
-```
-
-Alternatively, set `GITHUB_TOKEN` in the environment.
-
-The findings database lives at `~/.config/credscan/findings.db` by default. Override with `--db`.
-
-## Adding a scanner
-
-1. Subclass `Scanner` in `src/credscan/scanners/your_scanner.py`
-2. Implement `supports(target)` and `scan(target)` (async generator yielding `Finding` objects)
-3. Register it in `cli.py` and `web.py` `build_scanners()`
-
-Minimal example:
-
-```python
-from credscan.scanners.base import Scanner
-from credscan.models import Finding, Severity, Target, TargetKind
-
-class MySource(Scanner):
-    name = "mysource"
-
-    def supports(self, target: Target) -> bool:
-        return target.kind == TargetKind.DOMAIN
-
-    async def scan(self, target: Target):
-        # query your source, yield Finding objects
-        yield Finding(
-            source=self.name,
-            target=str(target),
-            kind="example",
-            severity=Severity.MEDIUM,
-            title="Example finding",
-            evidence_url="https://...",
-        )
-```
-
-## Architecture
-
-```
-[CLI / Web UI]
-      ↓
-  [Normalize] → Target(kind, value, domain)
-      ↓
-   [Runner] ──→ applicable scanners run concurrently
-      ↓
-   [Store]  ──→ SQLite with content-hash dedup
-      ↓
-  [Report: rich table | JSON | HTML page]
-```
-
-Scanners are independent. Each runs in its own task with a shared semaphore for bounded concurrency. A failure in one does not affect others.
-
-## Development
-
-```bash
-# Run tests
-pytest
-
-# Lint
-ruff check src tests
-
-# Type-check (optional)
-mypy src
-```
-
-## Responsible use
-
-Only scan domains and email addresses you own or have written authorization to scan. Some scanners issue queries to third-party services (GitHub, crt.sh, DuckDuckGo, HIBP) that may log those queries. Do not use this tool against targets you don't have permission to scan.
-
-The tool stores finding metadata locally. When a scanner encounters what appears to be a live secret, only the URL and pattern type are persisted; raw credential text is not written to the database.
-
-## Roadmap
-
-- Continuous mode with diff-based alerting (webhook, email)
-- Gitleaks-compatible rule file for the GitHub scanner
-- Paste site polling (Pastebin scraping API)
-- HTML report export with severity grouping
-- Dockerfile for one-command deployment
-
-## License
-
-MIT
+This repository is structured to be upload-ready for GitHub. Some scanners rely on third-party services and may require API credentials, rate-limit handling, or stricter HTML parsers before production use.

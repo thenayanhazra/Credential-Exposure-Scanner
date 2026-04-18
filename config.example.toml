@@ -1,10 +1,27 @@
-# credscan example config. Copy to ~/.config/credscan/config.toml and edit.
+[app]
+concurrency = 5
+db_path = "./credscan.db"
 
 [scanners.github_search]
-# Free GitHub personal access token (no scopes needed for public search).
-# Alternatively set GITHUB_TOKEN environment variable.
-# token = "ghp_your_token_here"
+enabled = true
+token = ""
+max_hits = 20
+
+[scanners.dorks]
+enabled = true
+max_queries = 6
+
+[scanners.crtsh]
+enabled = true
 
 [scanners.hibp]
-# Paid: $3.50/mo from https://haveibeenpwned.com/API/Key
-# api_key = "your_hibp_api_key"
+enabled = false
+api_key = ""
+
+[scanners.exact_email_search]
+enabled = true
+max_hits = 10
+
+[scanners.lead_fetch]
+enabled = true
+max_pages = 10
