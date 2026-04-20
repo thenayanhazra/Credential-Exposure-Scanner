@@ -1,7 +1,7 @@
 """Tests for the SQLite findings store."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -52,9 +52,9 @@ class TestUpsert:
         assert store.upsert(_mk_finding(kind="password_literal")) is True
 
     def test_reinsert_updates_last_seen(self, store):
-        f1 = _mk_finding(last_seen=datetime(2024, 1, 1, tzinfo=UTC))
+        f1 = _mk_finding(last_seen=datetime(2024, 1, 1, tzinfo=timezone.utc))
         store.upsert(f1)
-        f2 = _mk_finding(last_seen=datetime(2025, 6, 1, tzinfo=UTC))
+        f2 = _mk_finding(last_seen=datetime(2025, 6, 1, tzinfo=timezone.utc))
         store.upsert(f2)
         rows = store.findings_for("domain:example.com")
         assert len(rows) == 1
@@ -62,7 +62,7 @@ class TestUpsert:
 
     def test_reinsert_refreshes_mutable_fields(self, store):
         """title, severity, and raw should update on reinsert; first_seen should not."""
-        original_first_seen = datetime(2024, 1, 1, tzinfo=UTC)
+        original_first_seen = datetime(2024, 1, 1, tzinfo=timezone.utc)
         store.upsert(_mk_finding(
             first_seen=original_first_seen,
             severity=Severity.LOW,
@@ -70,7 +70,7 @@ class TestUpsert:
             raw={"v": 1},
         ))
         store.upsert(_mk_finding(
-            first_seen=datetime(2025, 1, 1, tzinfo=UTC),  # should be ignored
+            first_seen=datetime(2025, 1, 1, tzinfo=timezone.utc),  # should be ignored
             severity=Severity.CRITICAL,
             title="updated title",
             raw={"v": 2},
