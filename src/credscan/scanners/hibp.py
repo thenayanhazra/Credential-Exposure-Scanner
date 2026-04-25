@@ -23,6 +23,8 @@ class HIBPScanner(Scanner):
         return self.config.get("api_key")
 
     def enabled(self) -> bool:
+        if not self.config.get("enabled", True):
+            return False
         return bool(self._api_key())
 
     def supports(self, target: Target) -> bool:

@@ -6,8 +6,10 @@ import respx
 
 from credscan.models import Severity, Target, TargetKind
 from credscan.scanners.crtsh import CrtShScanner
+from credscan.scanners.exact_email_search import ExactEmailSearchScanner
 from credscan.scanners.github_search import GitHubSearchScanner
 from credscan.scanners.hibp import HIBPScanner
+from credscan.scanners.lead_fetch import LeadFetchScanner
 
 
 def _domain(v: str = "example.com") -> Target:
@@ -190,3 +192,142 @@ class TestHIBPScanner:
         ).mock(return_value=httpx.Response(404))
         findings = await _collect(HIBPScanner({"api_key": "k"}), _email())
         assert findings == []
+
+
+class TestExactEmailSearchScanner:
+    def test_disabled_without_token(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        assert ExactEmailSearchScanner().enabled() is False
+
+    def test_disabled_by_config_flag(self):
+        assert ExactEmailSearchScanner({"enabled": False, "token": "x"}).enabled() is False
+
+    def test_enabled_with_token(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "xxx")
+        assert ExactEmailSearchScanner().enabled() is True
+
+    def test_supports_email_only(self):
+        s = ExactEmailSearchScanner({"token": "x"})
+        assert s.supports(_email()) is True
+        assert s.supports(_domain()) is False
+
+    @respx.mock
+    async def test_finds_email_in_env_file(self):
+        respx.get("https://api.github.com/search/code").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "html_url": "https://github.com/acme/app/blob/main/.env",
+                            "path": ".env",
+                            "repository": {"full_name": "acme/app"},
+                        }
+                    ]
+                },
+            )
+        )
+        respx.get("https://raw.githubusercontent.com/acme/app/HEAD/.env").mock(
+            return_value=httpx.Response(200, text="EMAIL=user@example.com\n")
+        )
+        findings = await _collect(ExactEmailSearchScanner({"token": "t"}), _email())
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.HIGH
+        assert findings[0].kind == "email_in_public_code"
+
+    @respx.mock
+    async def test_finds_email_in_regular_file(self):
+        respx.get("https://api.github.com/search/code").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "html_url": "https://github.com/acme/app/blob/main/readme.md",
+                            "path": "readme.md",
+                            "repository": {"full_name": "acme/app"},
+                        }
+                    ]
+                },
+            )
+        )
+        respx.get("https://raw.githubusercontent.com/acme/app/HEAD/readme.md").mock(
+            return_value=httpx.Response(200, text="Contact user@example.com for support.\n")
+        )
+        findings = await _collect(ExactEmailSearchScanner({"token": "t"}), _email())
+        assert len(findings) == 1
+        assert findings[0].severity == Severity.MEDIUM
+        assert findings[0].kind == "email_in_public_code"
+
+    @respx.mock
+    async def test_empty_results_yields_nothing(self):
+        respx.get("https://api.github.com/search/code").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        assert await _collect(ExactEmailSearchScanner({"token": "t"}), _email()) == []
+
+    @respx.mock
+    async def test_http_error_yields_nothing(self):
+        respx.get("https://api.github.com/search/code").mock(
+            return_value=httpx.Response(403)
+        )
+        assert await _collect(ExactEmailSearchScanner({"token": "t"}), _email()) == []
+
+
+class TestLeadFetchScanner:
+    def test_disabled_without_token(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        assert LeadFetchScanner().enabled() is False
+
+    def test_disabled_by_config_flag(self):
+        assert LeadFetchScanner({"enabled": False, "token": "x"}).enabled() is False
+
+    def test_enabled_with_token(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "xxx")
+        assert LeadFetchScanner().enabled() is True
+
+    def test_supports_domain_and_email(self):
+        s = LeadFetchScanner({"token": "x"})
+        assert s.supports(_domain()) is True
+        assert s.supports(_email()) is True
+
+    @respx.mock
+    async def test_finds_secret_in_sensitive_file(self):
+        respx.get("https://api.github.com/search/code").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "html_url": "https://github.com/acme/app/blob/main/deploy.env",
+                            "path": "deploy.env",
+                            "repository": {"full_name": "acme/app"},
+                        }
+                    ]
+                },
+            )
+        )
+        raw_content = "DOMAIN=example.com\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n"
+        respx.get("https://raw.githubusercontent.com/acme/app/HEAD/deploy.env").mock(
+            return_value=httpx.Response(200, text=raw_content)
+        )
+        findings = await _collect(
+            LeadFetchScanner({"token": "t", "max_pages": 1}), _domain()
+        )
+        assert len(findings) == 1
+        assert findings[0].kind == "exposed_aws_access_key"
+        assert findings[0].severity == Severity.CRITICAL
+
+    @respx.mock
+    async def test_no_results_yields_nothing(self):
+        respx.get("https://api.github.com/search/code").mock(
+            return_value=httpx.Response(200, json={"items": []})
+        )
+        assert await _collect(LeadFetchScanner({"token": "t"}), _domain()) == []
+
+    @respx.mock
+    async def test_http_error_yields_nothing(self):
+        respx.get("https://api.github.com/search/code").mock(
+            return_value=httpx.Response(503)
+        )
+        assert await _collect(LeadFetchScanner({"token": "t"}), _domain()) == []

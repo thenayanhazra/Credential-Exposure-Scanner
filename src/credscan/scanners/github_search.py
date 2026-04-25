@@ -41,6 +41,8 @@ class GitHubSearchScanner(Scanner):
         return self.config.get("token") or os.environ.get("GITHUB_TOKEN")
 
     def enabled(self) -> bool:
+        if not self.config.get("enabled", True):
+            return False
         return self._token() is not None
 
     def supports(self, target: Target) -> bool:
@@ -60,8 +62,9 @@ class GitHubSearchScanner(Scanner):
         query = f'"{target.domain}"'
 
         async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
+            per_page = self.config.get("max_hits", 30)
             try:
-                resp = await client.get(self.API, params={"q": query, "per_page": 30})
+                resp = await client.get(self.API, params={"q": query, "per_page": per_page})
             except httpx.RequestError:
                 return
             if resp.status_code != 200:
