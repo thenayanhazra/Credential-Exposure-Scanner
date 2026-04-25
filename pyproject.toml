@@ -40,7 +40,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q -p no:respx"
 testpaths = ["."]
 pythonpath = ["src"]
 

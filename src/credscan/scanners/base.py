@@ -31,9 +31,9 @@ class Scanner(ABC):
     def enabled(self) -> bool:
         """Whether this scanner can run given current config.
 
-        Default: always enabled. Override for API-key-gated scanners.
+        Default: respects `enabled` key in config. Override for API-key-gated scanners.
         """
-        return True
+        return bool(self.config.get("enabled", True))
 
     @abstractmethod
     def supports(self, target: Target) -> bool:

@@ -48,10 +48,12 @@ class DorkScanner(Scanner):
 
     async def scan(self, target: Target) -> AsyncIterator[Finding]:
         headers = {"User-Agent": BROWSER_UA}
+        max_q = self.config.get("max_queries", len(DORK_TEMPLATES))
+        templates_to_run = DORK_TEMPLATES[:min(len(DORK_TEMPLATES), max_q)]
         async with httpx.AsyncClient(
             timeout=20.0, follow_redirects=True, headers=headers
         ) as client:
-            for i, template in enumerate(DORK_TEMPLATES):
+            for i, template in enumerate(templates_to_run):
                 if i > 0:
                     await asyncio.sleep(INTER_QUERY_DELAY)
                 query = template.format(domain=target.domain)

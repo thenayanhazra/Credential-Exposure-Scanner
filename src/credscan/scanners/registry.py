@@ -11,14 +11,18 @@ from ..config import scanner_config
 from .base import Scanner
 from .crtsh import CrtShScanner
 from .dorks import DorkScanner
+from .exact_email_search import ExactEmailSearchScanner
 from .github_search import GitHubSearchScanner
 from .hibp import HIBPScanner
+from .lead_fetch import LeadFetchScanner
 
 # Order here is the order of chip display in the UI and the order scanners
 # are offered to the runner (the runner is concurrent, so order is cosmetic).
 SCANNER_CLASSES: list[type[Scanner]] = [
     CrtShScanner,
     GitHubSearchScanner,
+    ExactEmailSearchScanner,
+    LeadFetchScanner,
     DorkScanner,
     HIBPScanner,
 ]
