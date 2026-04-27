@@ -2,80 +2,96 @@
 
 ## Executive summary
 
-Credential Exposure Scanner has a clean baseline: tests and lint pass, the scanner abstraction is simple, and core data handling already avoids storing raw credentials directly. The next maturity step is to tighten operational hardening, make scanner quality easier to maintain at scale, and align docs with the real code layout.
+The project has a good architecture baseline for a lightweight OSINT scanner: target normalization is centralized, scanners are modular, and persistence has deterministic dedup behavior. The most impactful next step is improving operational resilience (timeouts/retries/transaction boundaries), then tightening documentation/config UX so contributors and operators can run it safely at scale.
 
-## What is already working well
+## What is already strong
 
-- Strong modular split (`normalize` → `runner` → scanner registry → `store`) keeps concerns clear.
-- Deduped storage with stable keys and severity rank provides deterministic listing/order.
-- Clear target normalization and typed models reduce malformed input risk.
-- Good test baseline with broad unit coverage and passing checks.
+- **Clear execution pipeline** (`normalize` → scanner registry → `Runner` → `Store`).
+- **Robust scanner isolation**: scanner exceptions are swallowed per scanner so one failure does not break the whole scan.
+- **Deterministic dedup and ordering** in SQLite (`dedup_key` PK + `severity_rank` sorting).
+- **Healthy baseline tests** in the repo for runner, models, normalization, scanners, and store.
 
-## Priority recommendations
+## Findings from code review (high signal)
 
-### 1) Documentation fidelity and onboarding (High)
+### 1) Per-finding DB commits reduce throughput under concurrency (**High**)
 
-The README "Repository layout" references modules that are not present in the current tree (for example: `evidence.py`, `scoring.py`, `taxonomy.py`, `verification.py`, `web/` package path), while implementation lives in files like `web.py`, `store.py`, and `scanners/`.
+`Runner._run_one()` calls `self.store.upsert()` for every finding, and `Store.upsert()` commits on every call. This can create unnecessary lock churn and significantly slow scans when scanner output is large.
 
-**Recommendation**
-- Update the README layout to reflect the actual package structure.
-- Add a short "Production readiness" section that calls out network/API dependencies and expected rate limits.
-- Add an architecture diagram (or a short request flow section) for contributors.
-
-### 2) Persistence performance and resilience (High)
-
-`Store.upsert()` commits every individual finding. This is simple but becomes a throughput bottleneck under larger scans and increases lock churn in SQLite.
+**Where observed**
+- `src/credscan/runner.py` (`_run_one` inserts each finding one-by-one)
+- `src/credscan/store.py` (`upsert` ends with `self.conn.commit()`)
 
 **Recommendation**
-- Batch scanner writes per scan (or per scanner) and commit once per batch.
-- Add optional SQLite pragmas for local single-writer workloads (`journal_mode=WAL`, `synchronous=NORMAL`) behind a config toggle.
-- Add migration/version handling so schema evolution is explicit and safer over time.
+- Add batched writes per scanner run (`upsert_many(findings)`), committing once per batch.
+- Optionally keep per-finding commit behavior behind a "safe mode" config switch for debugging.
 
-### 3) Scanner execution controls (Medium-High)
+---
 
-Runner handles scanner failures safely, but there is no per-scanner timeout/circuit-break policy and no first-class retry/backoff policy in the runner contract.
+### 2) No scanner-level timeout/retry policy in runner contract (**High**)
 
-**Recommendation**
-- Add configurable timeout per scanner (e.g., `asyncio.timeout`).
-- Introduce a common retry/backoff helper (with jitter) for transient HTTP failures.
-- Persist per-scanner execution metrics (duration, success/fail, timeout) with each scan to support tuning.
+Runner catches exceptions but has no timeout envelope, so a scanner can hang indefinitely. There is also no standardized retry/backoff policy for transient HTTP failures.
 
-### 4) Configuration and secret hygiene UX (Medium)
-
-Configuration loading is intentionally lightweight, but validation is minimal. This increases risk of silent misconfiguration.
+**Where observed**
+- `src/credscan/runner.py` (`asyncio.gather` with per-scanner tasks, no timeout wrapper)
 
 **Recommendation**
-- Define a typed config model (Pydantic) for scanner settings and credentials.
-- Fail fast with clear messages for invalid values (timeouts, limits, API keys expected format).
-- Add a `credscan doctor` command to validate config and external connectivity non-destructively.
+- Add per-scanner timeout config (e.g., `asyncio.timeout(...)`).
+- Introduce shared retry helper (exponential backoff + jitter) for scanner HTTP clients.
+- Record scanner execution metrics (`duration_ms`, `status`, `error_type`) in scan history.
 
-### 5) API/web hardening for local-to-team use (Medium)
+---
 
-Current FastAPI endpoints are intentionally simple and suitable for local use. For shared/internal deployments, controls are thin.
+### 3) Config loading is intentionally minimal but not validated (**Medium-High**)
 
-**Recommendation**
-- Add optional API token auth for `/scan` and `/findings`.
-- Add request rate limits and max body size safeguards.
-- Add structured audit logs for scan requests (target hash, scanner set, duration, status).
+`load_config()` returns raw TOML dict. This is simple, but malformed values can fail later or be silently ignored.
 
-### 6) Test strategy expansion (Medium)
-
-Current tests are strong for unit behavior. Remaining risk is integration behavior with external providers and long-running scanner concurrency scenarios.
+**Where observed**
+- `src/credscan/config.py`
 
 **Recommendation**
-- Add integration tests for scanner registry wiring with mocked HTTP responses across all scanners.
-- Add concurrency stress tests for `Runner` + `Store` to detect lock/contention regressions.
-- Add snapshot-style API contract tests for web and CLI JSON output.
+- Add typed config validation (Pydantic/dataclass validators) for common keys.
+- Fail fast with clear diagnostics for invalid types/ranges (timeouts, limits, booleans).
+- Add `credscan doctor` to validate config and external connectivity safely.
 
-## Suggested phased roadmap
+---
 
-1. **Week 1 (quick wins):** README fixes, config model validation, timeout defaults.
-2. **Week 2:** batched store writes + optional WAL mode + scanner execution metrics.
-3. **Week 3:** auth/rate limiting for web mode + `doctor` command.
-4. **Week 4:** integration and stress-test expansion + CI gates for coverage threshold.
+### 4) README structure section is stale relative to codebase (**Medium**)
 
-## Optional longer-term improvements
+The README includes paths/modules that are not present and omits actual current files.
 
-- Introduce plugin entry points to support out-of-tree scanners.
-- Add an event stream or queue backend abstraction for high-volume scans.
-- Add finding suppression/triage state for analyst workflows.
+**Where observed**
+- `README.md` repository layout section
+
+**Recommendation**
+- Keep layout section synchronized with current package tree.
+- Add a short “scanner dependency matrix” showing required APIs/keys and rate-limit expectations.
+
+---
+
+### 5) Scan history schema is useful but limited for observability (**Medium**)
+
+Current `scans` table tracks only top-level scan start/finish/status/finding_count. There is no per-scanner telemetry, which makes performance tuning and incident debugging harder.
+
+**Where observed**
+- `src/credscan/store.py` (`scans` schema and write paths)
+
+**Recommendation**
+- Add a `scan_runs` table: `(scan_id, scanner, started_at, finished_at, status, finding_count, error)`.
+- Surface these details in CLI and web UI for faster troubleshooting.
+
+---
+
+## Prioritized roadmap
+
+1. **Resilience first (week 1):** scanner timeouts + retry helper + richer scanner status logging.
+2. **Performance next (week 2):** batched DB writes + optional SQLite WAL tuning.
+3. **Operator UX (week 3):** typed config validation + `credscan doctor` command.
+4. **Observability (week 4):** per-scanner run metrics persisted and exposed in API/CLI.
+5. **Docs hardening (continuous):** keep README structure/dependency sections aligned with implementation.
+
+## Low-effort, high-value quick wins
+
+- Add a default timeout value in config and apply it in runner immediately.
+- Add a `--fail-fast` CLI option to stop scan when critical scanners fail.
+- Emit one summary log per scanner (`scanner`, `count`, `duration`, `status`).
+- Add a short architecture flow block to README for new contributors.

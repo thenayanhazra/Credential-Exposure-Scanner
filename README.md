@@ -73,17 +73,22 @@ credscan history
 src/credscan/
   cli.py
   config.py
-  evidence.py
   models.py
   normalize.py
-  registry.py
   runner.py
-  scoring.py
   store.py
-  taxonomy.py
-  verification.py
-  web/
+  web.py
   scanners/
+    base.py
+    crtsh.py
+    dorks.py
+    exact_email_search.py
+    github_search.py
+    hibp.py
+    lead_fetch.py
+    registry.py
+  templates/
+    index.html
 ```
 
 ## Design constraints
