@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
+
+import pytest
 
 
-def pytest_pyfunc_call(pyfuncitem):
-    test_func = pyfuncitem.obj
-    if inspect.iscoroutinefunction(test_func):
-        kwargs = {name: pyfuncitem.funcargs[name] for name in pyfuncitem._fixtureinfo.argnames}
-        asyncio.run(test_func(**kwargs))
-        return True
-    return None
+@pytest.fixture(autouse=True)
+def _instant_sleep(monkeypatch):
+    """Make asyncio.sleep a no-op so retry backoff doesn't slow the test suite."""
+    async def _noop(_seconds):
+        pass
+
+    monkeypatch.setattr(asyncio, "sleep", _noop)
