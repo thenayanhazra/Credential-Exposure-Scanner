@@ -1,6 +1,7 @@
 """Test the Runner orchestrates scanners correctly."""
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
@@ -32,6 +33,13 @@ class _FakeScanner(Scanner):
             raise RuntimeError(f"{self.name} boom")
         for f in self._findings:
             yield f
+
+
+class _SlowScanner(_FakeScanner):
+    async def scan(self, target: Target) -> AsyncIterator[Finding]:
+        await asyncio.sleep(0.05)
+        if False:
+            yield  # pragma: no cover
 
 
 def _target() -> Target:
@@ -117,3 +125,12 @@ async def test_no_applicable_scanners(store):
     assert result.scanners_run == []
     scans = store.recent_scans()
     assert scans[0]["status"] == "no_scanners"
+
+
+async def test_scanner_timeout_does_not_break_others(store):
+    slow = _SlowScanner("slow", [])
+    good = _FakeScanner("good", [_finding("good")])
+    runner = Runner([slow, good], store, scanner_timeout_s=0.01)
+    result = await runner.run(_target())
+    assert len(result.findings) == 1
+    assert result.findings[0].source == "good"
