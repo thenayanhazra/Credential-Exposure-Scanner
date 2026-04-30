@@ -1,14 +1,18 @@
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 
 @pytest.fixture(autouse=True)
 def _instant_sleep(monkeypatch):
-    """Make asyncio.sleep a no-op so retry backoff doesn't slow the test suite."""
+    """Make retry backoff and inter-query delays instant in tests.
+
+    Patches the module-level _sleep references in the two modules that delay,
+    rather than the global asyncio.sleep, to avoid interfering with
+    pytest-asyncio's internal event-loop scheduling.
+    """
     async def _noop(_seconds):
         pass
 
-    monkeypatch.setattr(asyncio, "sleep", _noop)
+    monkeypatch.setattr("credscan.http._sleep", _noop)
+    monkeypatch.setattr("credscan.scanners.dorks._sleep", _noop)

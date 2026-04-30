@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 
 import httpx
 
 log = logging.getLogger(__name__)
+
+# Module-level reference so tests can patch just this without touching the
+# global asyncio.sleep (which pytest-asyncio also uses internally).
+_sleep: Callable[[float], object] = asyncio.sleep
 
 _TRANSIENT = frozenset({429, 500, 502, 503, 504})
 _BASE_DELAY = 2.0
@@ -33,7 +38,7 @@ async def get_with_retry(
             if attempt == retries:
                 log.warning("GET %s failed after %d attempt(s): %s", url, retries + 1, exc)
                 return None
-            await asyncio.sleep(min(_BASE_DELAY**attempt, _MAX_DELAY))
+            await _sleep(min(_BASE_DELAY**attempt, _MAX_DELAY))
             continue
 
         if resp.status_code not in _TRANSIENT:
@@ -47,6 +52,6 @@ async def get_with_retry(
         delay = float(header) if header.isdigit() else _BASE_DELAY**attempt
         delay = min(delay, _MAX_DELAY)
         log.debug("GET %s → %d, retrying in %.1fs", url, resp.status_code, delay)
-        await asyncio.sleep(delay)
+        await _sleep(delay)
 
     return None  # unreachable, but satisfies type checkers

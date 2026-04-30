@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from urllib.parse import urlencode
 
 import httpx
@@ -39,6 +39,8 @@ BROWSER_UA = (
 
 INTER_QUERY_DELAY = 0.4  # seconds; be polite
 
+_sleep: Callable[[float], object] = asyncio.sleep
+
 
 class DorkScanner(Scanner):
     name = "dorks"
@@ -56,7 +58,7 @@ class DorkScanner(Scanner):
         ) as client:
             for i, template in enumerate(templates_to_run):
                 if i > 0:
-                    await asyncio.sleep(INTER_QUERY_DELAY)
+                    await _sleep(INTER_QUERY_DELAY)
                 query = template.format(domain=target.domain)
                 resp = await get_with_retry(client, self.ENDPOINT, params={"q": query})
                 if resp is None or resp.status_code != 200:
