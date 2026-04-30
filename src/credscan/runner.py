@@ -17,10 +17,12 @@ class Runner:
         scanners: list[Scanner],
         store: Store,
         concurrency: int = 5,
+        scanner_timeout_s: float = 30.0,
     ) -> None:
         self.scanners = scanners
         self.store = store
         self.sem = asyncio.Semaphore(concurrency)
+        self.scanner_timeout_s = scanner_timeout_s
 
     def applicable(self, target: Target) -> list[Scanner]:
         return [s for s in self.scanners if s.enabled() and s.supports(target)]
@@ -31,11 +33,18 @@ class Runner:
         out: list[Finding] = []
         async with self.sem:
             try:
-                async for finding in scanner.scan(target):
-                    self.store.upsert(finding)
-                    out.append(finding)
+                async def _collect() -> None:
+                    async for finding in scanner.scan(target):
+                        out.append(finding)
+
+                await asyncio.wait_for(_collect(), timeout=self.scanner_timeout_s)
+            except asyncio.TimeoutError:
+                log.warning("scanner %s timed out after %.2fs", scanner.name, self.scanner_timeout_s)
             except Exception as e:  # noqa: BLE001
                 log.warning("scanner %s failed: %s", scanner.name, e)
+            finally:
+                if out:
+                    self.store.upsert_many(out)
         return out
 
     async def run(self, target: Target) -> ScanResult:

@@ -91,15 +91,9 @@ class Store:
 
     # --- findings ---
 
-    def upsert(self, f: Finding) -> bool:
-        """Insert or refresh a finding. Returns True if this is a new row.
-
-        Attempts INSERT; on conflict, falls through to UPDATE. In the
-        inserted-fresh case that's one statement; in the refresh case it's
-        two. first_seen is never overwritten.
-        """
+    def _params_for_finding(self, f: Finding) -> dict[str, Any]:
         sev = Severity(f.severity)
-        params = {
+        return {
             "dedup_key": f.dedup_key(),
             "source": f.source,
             "target": f.target,
@@ -113,10 +107,36 @@ class Store:
             "first_seen": f.first_seen.isoformat(),
             "last_seen": f.last_seen.isoformat(),
         }
+
+    def upsert(self, f: Finding) -> bool:
+        """Insert or refresh a finding. Returns True if this is a new row.
+
+        Attempts INSERT; on conflict, falls through to UPDATE. In the
+        inserted-fresh case that's one statement; in the refresh case it's
+        two. first_seen is never overwritten.
+        """
+        params = self._params_for_finding(f)
         cur = self.conn.execute(_INSERT_SQL, params)
         inserted = cur.rowcount > 0
         if not inserted:
             self.conn.execute(_UPDATE_SQL, params)
+        self.conn.commit()
+        return inserted
+
+
+    def upsert_many(self, findings: list[Finding]) -> int:
+        """Insert or refresh many findings in one transaction.
+
+        Returns the number of newly inserted rows.
+        """
+        inserted = 0
+        for finding in findings:
+            params = self._params_for_finding(finding)
+            cur = self.conn.execute(_INSERT_SQL, params)
+            is_inserted = cur.rowcount > 0
+            if not is_inserted:
+                self.conn.execute(_UPDATE_SQL, params)
+            inserted += int(is_inserted)
         self.conn.commit()
         return inserted
 

@@ -125,3 +125,15 @@ class TestScanHistory:
         sid = store.start_scan("domain:example.com")
         store.finish_scan(sid, 0, status="error")
         assert store.recent_scans()[0]["status"] == "error"
+
+
+class TestUpsertMany:
+    def test_upsert_many_inserts_and_updates(self, store):
+        f1 = _mk_finding(kind="k1", evidence_url="https://a")
+        f2 = _mk_finding(kind="k2", evidence_url="https://b")
+        assert store.upsert_many([f1, f2]) == 2
+        updated = _mk_finding(kind="k1", evidence_url="https://a", title="changed")
+        assert store.upsert_many([updated]) == 0
+        rows = store.findings_for("domain:example.com")
+        assert len(rows) == 2
+        assert any(r["title"] == "changed" for r in rows)
