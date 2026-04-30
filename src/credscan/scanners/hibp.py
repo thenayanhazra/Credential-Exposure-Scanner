@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 import httpx
 
 from .. import USER_AGENT
+from ..http import get_with_retry
 from ..models import Finding, Severity, Target, TargetKind
 from .base import Scanner
 
@@ -40,9 +41,8 @@ class HIBPScanner(Scanner):
         }
         url = self.API.format(account=target.value)
         async with httpx.AsyncClient(timeout=20.0, headers=headers) as client:
-            try:
-                resp = await client.get(url, params={"truncateResponse": "false"})
-            except httpx.RequestError:
+            resp = await get_with_retry(client, url, params={"truncateResponse": "false"})
+            if resp is None:
                 return
             if resp.status_code == 404:
                 return

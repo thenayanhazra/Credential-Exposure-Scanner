@@ -14,10 +14,10 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from .. import USER_AGENT
+from ..http import get_with_retry
 from ..models import Finding, Target
+from ._github import api_headers, find_secrets, raw_url
 from .base import Scanner
-from .github_search import SECRET_PATTERNS
 
 _FILE_FILTER = "extension:env OR extension:log OR extension:cfg OR extension:ini"
 _RAW_FETCH_MULTIPLIER = 5
@@ -45,28 +45,19 @@ class LeadFetchScanner(Scanner):
         if not token:
             return
 
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": USER_AGENT,
-        }
-
         max_pages = self.config.get("max_pages", 10)
         max_raw_fetches = max_pages * _RAW_FETCH_MULTIPLIER
         query = f'"{target.value}" {_FILE_FILTER}'
 
-        async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
+        async with httpx.AsyncClient(timeout=30.0, headers=api_headers(token)) as client:
             items: list[dict] = []
             for page in range(1, max_pages + 1):
-                try:
-                    resp = await client.get(
-                        self.API,
-                        params={"q": query, "per_page": 30, "page": page},
-                    )
-                except httpx.RequestError:
-                    break
-                if resp.status_code != 200:
+                resp = await get_with_retry(
+                    client,
+                    self.API,
+                    params={"q": query, "per_page": 30, "page": page},
+                )
+                if resp is None or resp.status_code != 200:
                     break
                 page_items = resp.json().get("items", [])
                 items.extend(page_items)
@@ -85,20 +76,14 @@ class LeadFetchScanner(Scanner):
                 if not (repo and path):
                     continue
 
-                raw_url = f"https://raw.githubusercontent.com/{repo}/HEAD/{path}"
-                try:
-                    raw_resp = await client.get(raw_url, timeout=15.0)
-                except httpx.RequestError:
-                    continue
+                raw_resp = await get_with_retry(client, raw_url(repo, path), timeout=15.0)
                 fetch_count += 1
-                if raw_resp.status_code != 200:
+                if raw_resp is None or raw_resp.status_code != 200:
                     continue
 
-                content = raw_resp.text
-                for pat, kind, severity in SECRET_PATTERNS:
-                    match = pat.search(content)
-                    if not match:
-                        continue
+                # No domain proximity check: the file was found because it
+                # matched the target query, so any secret in it is relevant.
+                for kind, severity in find_secrets(raw_resp.text):
                     dedup = f"{repo}|{path}|{kind}"
                     if dedup in seen:
                         continue

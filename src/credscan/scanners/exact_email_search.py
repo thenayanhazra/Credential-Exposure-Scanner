@@ -12,8 +12,9 @@ from collections.abc import AsyncIterator
 
 import httpx
 
-from .. import USER_AGENT
+from ..http import get_with_retry
 from ..models import Finding, Severity, Target, TargetKind
+from ._github import api_headers, raw_url
 from .base import Scanner
 
 _SENSITIVE_PATH_RE = re.compile(
@@ -43,23 +44,14 @@ class ExactEmailSearchScanner(Scanner):
         if not token:
             return
 
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": USER_AGENT,
-        }
         per_page = self.config.get("max_hits", 10)
         query = f'"{target.value}"'
 
-        async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
-            try:
-                resp = await client.get(
-                    self.API, params={"q": query, "per_page": per_page}
-                )
-            except httpx.RequestError:
-                return
-            if resp.status_code != 200:
+        async with httpx.AsyncClient(timeout=30.0, headers=api_headers(token)) as client:
+            resp = await get_with_retry(
+                client, self.API, params={"q": query, "per_page": per_page}
+            )
+            if resp is None or resp.status_code != 200:
                 return
 
             items = resp.json().get("items", [])
@@ -77,18 +69,12 @@ class ExactEmailSearchScanner(Scanner):
                     continue
                 seen.add(dedup)
 
-                raw_url = f"https://raw.githubusercontent.com/{repo}/HEAD/{path}"
-                try:
-                    raw_resp = await client.get(raw_url, timeout=15.0)
-                except httpx.RequestError:
-                    continue
-                if raw_resp.status_code != 200:
+                raw_resp = await get_with_retry(client, raw_url(repo, path), timeout=15.0)
+                if raw_resp is None or raw_resp.status_code != 200:
                     continue
 
                 severity = (
-                    Severity.HIGH
-                    if _SENSITIVE_PATH_RE.search(path)
-                    else Severity.MEDIUM
+                    Severity.HIGH if _SENSITIVE_PATH_RE.search(path) else Severity.MEDIUM
                 )
                 yield Finding(
                     source=self.name,

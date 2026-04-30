@@ -33,10 +33,6 @@ SEV_COLORS = {
 }
 
 
-def _db_option() -> Path:
-    return default_db_path()
-
-
 @app.command()
 def scan(
     target_input: str = typer.Argument(..., help="Email or domain to scan."),
@@ -58,10 +54,11 @@ def scan(
 
     db_path = db or default_db_path()
     cfg = load_config()
+    concurrency = cfg.get("app", {}).get("concurrency", 5)
     scanners = build_scanners(cfg)
 
     with Store(db_path) as store:
-        runner = Runner(scanners, store)
+        runner = Runner(scanners, store, concurrency=concurrency)
         applicable = [s.name for s in runner.applicable(target)]
 
         if output != "json":

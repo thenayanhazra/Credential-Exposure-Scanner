@@ -44,6 +44,7 @@ Copy the example config and edit it:
 
 ```bash
 cp config.example.toml ~/.config/credscan/config.toml
+chmod 600 ~/.config/credscan/config.toml   # contains API keys — keep private
 ```
 
 ## Usage

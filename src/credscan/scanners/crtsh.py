@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 import httpx
 
 from .. import USER_AGENT
+from ..http import get_with_retry
 from ..models import Finding, Severity, Target, TargetKind
 from .base import Scanner
 
@@ -23,11 +24,8 @@ class CrtShScanner(Scanner):
             timeout=30.0,
             headers={"User-Agent": USER_AGENT},
         ) as client:
-            try:
-                resp = await client.get(self.BASE_URL, params=params)
-            except httpx.RequestError:
-                return
-            if resp.status_code != 200:
+            resp = await get_with_retry(client, self.BASE_URL, params=params)
+            if resp is None or resp.status_code != 200:
                 return
             try:
                 entries = resp.json()

@@ -55,12 +55,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             return JSONResponse({"error": str(e)}, status_code=400)
 
         try:
-            scanners = build_scanners(load_config())
+            cfg = load_config()
+            concurrency = cfg.get("app", {}).get("concurrency", 5)
+            scanners = build_scanners(cfg)
             with _open_store() as store:
-                result = await Runner(scanners, store).run(t)
-        except Exception as e:  # noqa: BLE001
+                result = await Runner(scanners, store, concurrency=concurrency).run(t)
+        except Exception:  # noqa: BLE001
             log.exception("scan failed")
-            return JSONResponse({"error": f"scan failed: {e}"}, status_code=500)
+            return JSONResponse({"error": "scan failed"}, status_code=500)
 
         return JSONResponse(result.to_public_dict())
 
