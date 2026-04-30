@@ -37,9 +37,9 @@ class _FakeScanner(Scanner):
 
 class _SlowScanner(_FakeScanner):
     async def scan(self, target: Target) -> AsyncIterator[Finding]:
+        if target.value == "__never__":
+            yield _finding("slow", "never")  # pragma: no cover
         await asyncio.sleep(0.05)
-        if False:
-            yield  # pragma: no cover
 
 
 class _PartialSlowScanner(_FakeScanner):
