@@ -39,13 +39,13 @@ class _SlowScanner(_FakeScanner):
     async def scan(self, target: Target) -> AsyncIterator[Finding]:
         if target.value == "__never__":
             yield _finding("slow", "never")  # pragma: no cover
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
 
 
 class _PartialSlowScanner(_FakeScanner):
     async def scan(self, target: Target) -> AsyncIterator[Finding]:
         yield _finding("partial", "seed")
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
 
 
 def _target() -> Target:
@@ -136,7 +136,7 @@ async def test_no_applicable_scanners(store):
 async def test_scanner_timeout_does_not_break_others(store):
     slow = _SlowScanner("slow", [])
     good = _FakeScanner("good", [_finding("good")])
-    runner = Runner([slow, good], store, scanner_timeout_s=0.01)
+    runner = Runner([slow, good], store, scanner_timeout_s=0.05)
     result = await runner.run(_target())
     assert len(result.findings) == 1
     assert result.findings[0].source == "good"
@@ -144,7 +144,7 @@ async def test_scanner_timeout_does_not_break_others(store):
 
 async def test_timeout_persists_partial_findings(store):
     partial = _PartialSlowScanner("partial", [])
-    runner = Runner([partial], store, scanner_timeout_s=0.01)
+    runner = Runner([partial], store, scanner_timeout_s=0.05)
     result = await runner.run(_target())
     assert len(result.findings) == 1
     rows = store.findings_for("domain:example.com")
