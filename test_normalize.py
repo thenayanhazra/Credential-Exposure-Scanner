@@ -69,7 +69,10 @@ class TestDomainNormalization:
         assert normalize("http://example.com").value == "example.com"
         assert normalize("example.com:8080").value == "example.com"
         assert normalize("https://example.com:443/a?b=c").value == "example.com"
-        assert normalize("ftp://example.com/file.txt").value == "example.com"
+
+    def test_non_http_scheme_rejected(self):
+        with pytest.raises(NormalizeError):
+            normalize("ftp://example.com/file.txt")
 
     def test_trailing_dot_stripped(self):
         assert normalize("example.com.").value == "example.com"
