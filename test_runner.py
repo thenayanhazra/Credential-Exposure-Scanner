@@ -117,3 +117,8 @@ async def test_no_applicable_scanners(store):
     assert result.scanners_run == []
     scans = store.recent_scans()
     assert scans[0]["status"] == "no_scanners"
+
+
+def test_rejects_zero_concurrency(store):
+    with pytest.raises(ValueError, match="concurrency must be >= 1"):
+        Runner([], store, concurrency=0)

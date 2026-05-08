@@ -27,6 +27,10 @@ class TestEmailNormalization:
         t = normalize("   user@example.com  ")
         assert t.value == "user@example.com"
 
+    def test_plus_only_local_part_rejected(self):
+        with pytest.raises(NormalizeError):
+            normalize("+tag@example.com")
+
     def test_subdomain_email(self):
         t = normalize("dev@mail.corp.example.com")
         assert t.domain == "mail.corp.example.com"
@@ -65,6 +69,10 @@ class TestDomainNormalization:
         assert normalize("http://example.com").value == "example.com"
         assert normalize("example.com:8080").value == "example.com"
         assert normalize("https://example.com:443/a?b=c").value == "example.com"
+
+    def test_non_http_scheme_rejected(self):
+        with pytest.raises(NormalizeError):
+            normalize("ftp://example.com/file.txt")
 
     def test_trailing_dot_stripped(self):
         assert normalize("example.com.").value == "example.com"

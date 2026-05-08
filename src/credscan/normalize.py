@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlsplit
 
 from .models import Target, TargetKind
 
@@ -36,6 +37,8 @@ def normalize(raw: str) -> Target:
             raise NormalizeError(f"invalid email: {raw!r}")
         local, _, domain = s.rpartition("@")
         local = local.split("+", 1)[0]
+        if not local:
+            raise NormalizeError(f"invalid email local-part: {raw!r}")
         if not DOMAIN_RE.match(domain):
             raise NormalizeError(f"invalid email domain: {raw!r}")
         return Target(
@@ -44,10 +47,14 @@ def normalize(raw: str) -> Target:
             domain=domain,
         )
 
-    # Try to accept a pasted URL by stripping scheme/path/port
-    s = re.sub(r"^https?://", "", s)
-    s = s.split("/", 1)[0]
-    s = s.split(":", 1)[0]
+    # Accept pasted HTTP(S) URLs by extracting the hostname.
+    if s.startswith(("http://", "https://")):
+        parsed = urlsplit(s)
+        s = (parsed.hostname or "").lower()
+    else:
+        # Bare domain input (optionally with path/port).
+        s = s.split("/", 1)[0]
+        s = s.split(":", 1)[0]
     s = s.rstrip(".")
 
     if not DOMAIN_RE.match(s):
