@@ -18,6 +18,9 @@ class Runner:
         store: Store,
         concurrency: int = 5,
     ) -> None:
+        if concurrency < 1:
+            raise ValueError("concurrency must be >= 1")
+
         self.scanners = scanners
         self.store = store
         self.sem = asyncio.Semaphore(concurrency)

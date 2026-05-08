@@ -36,6 +36,8 @@ def normalize(raw: str) -> Target:
             raise NormalizeError(f"invalid email: {raw!r}")
         local, _, domain = s.rpartition("@")
         local = local.split("+", 1)[0]
+        if not local:
+            raise NormalizeError(f"invalid email local-part: {raw!r}")
         if not DOMAIN_RE.match(domain):
             raise NormalizeError(f"invalid email domain: {raw!r}")
         return Target(
@@ -45,7 +47,7 @@ def normalize(raw: str) -> Target:
         )
 
     # Try to accept a pasted URL by stripping scheme/path/port
-    s = re.sub(r"^https?://", "", s)
+    s = re.sub(r"^[a-z][a-z0-9+.-]*://", "", s)
     s = s.split("/", 1)[0]
     s = s.split(":", 1)[0]
     s = s.rstrip(".")

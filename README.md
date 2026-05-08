@@ -22,13 +22,16 @@ Credential Exposure Scanner is a focused OSINT-style scanner for domains and ema
 
 ## Finding model
 
-Every finding carries:
+Each finding is stored and returned with:
 
-- `exposure_type`: `breach_exposure`, `public_secret_exposure`, `artifact_lead`, or `asset_intelligence`
-- `verification_state`: `verified`, `unverified`, or `discarded`
-- `severity`
-- `confidence`
-- sanitized evidence metadata
+- `source` (scanner name)
+- `target` (`kind:value`, e.g. `email:user@example.com`)
+- `kind` (scanner-specific type such as `search_hit` or `exposed_aws_access_key`)
+- `severity` (`info`, `low`, `medium`, `high`, `critical`)
+- `title`
+- optional `evidence_url` / `evidence_hash`
+- `raw` (sanitized metadata payload)
+- `first_seen` and `last_seen` timestamps
 
 ## Installation
 
@@ -36,6 +39,8 @@ Every finding carries:
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
+# optional test/dev tools
+pip install -e .[dev]
 ```
 
 ## Configure
