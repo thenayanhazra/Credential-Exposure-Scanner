@@ -13,7 +13,7 @@ SECRET_PATTERNS: list[tuple[re.Pattern[str], str, Severity]] = [
     (re.compile(r"ghp_[A-Za-z0-9]{36}"), "github_pat", Severity.CRITICAL),
     (re.compile(r"github_pat_[A-Za-z0-9_]{22,}"), "github_pat_fine", Severity.CRITICAL),
     (re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"), "slack_token", Severity.HIGH),
-    (re.compile(r"sk-[A-Za-z0-9]{20,}"), "openai_key", Severity.HIGH),
+    (re.compile(r"sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}"), "openai_key", Severity.HIGH),
     (
         re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"),
         "private_key",

@@ -1,6 +1,8 @@
 [app]
 concurrency = 5
 db_path = "./credscan.db"
+# Maximum seconds to wait for any single scanner before cancelling it (default 120)
+scanner_timeout = 120
 
 [scanners.github_search]
 enabled = true
