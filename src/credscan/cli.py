@@ -54,11 +54,13 @@ def scan(
 
     db_path = db or default_db_path()
     cfg = load_config()
-    concurrency = cfg.get("app", {}).get("concurrency", 5)
+    app_cfg = cfg.get("app", {})
+    concurrency = app_cfg.get("concurrency", 5)
+    scanner_timeout = app_cfg.get("scanner_timeout", 120)
     scanners = build_scanners(cfg)
 
     with Store(db_path) as store:
-        runner = Runner(scanners, store, concurrency=concurrency)
+        runner = Runner(scanners, store, concurrency=concurrency, scanner_timeout=scanner_timeout)
         applicable = [s.name for s in runner.applicable(target)]
 
         if output != "json":

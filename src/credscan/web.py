@@ -8,6 +8,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from . import __version__
 from .config import default_db_path, load_config
 from .normalize import NormalizeError, normalize
 from .runner import Runner
@@ -25,7 +26,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     `db_path` defaults to the configured location. Pass an override for tests
     or for multi-instance deployments.
     """
-    app = FastAPI(title="credscan", version="0.1.0")
+    app = FastAPI(title="credscan", version=__version__)
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
     resolved_db = db_path or default_db_path()
 
@@ -56,10 +57,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
         try:
             cfg = load_config()
-            concurrency = cfg.get("app", {}).get("concurrency", 5)
+            app_cfg = cfg.get("app", {})
+            concurrency = app_cfg.get("concurrency", 5)
+            scanner_timeout = app_cfg.get("scanner_timeout", 120)
             scanners = build_scanners(cfg)
             with _open_store() as store:
-                result = await Runner(scanners, store, concurrency=concurrency).run(t)
+                result = await Runner(
+                    scanners, store, concurrency=concurrency, scanner_timeout=scanner_timeout
+                ).run(t)
         except Exception:  # noqa: BLE001
             log.exception("scan failed")
             return JSONResponse({"error": "scan failed"}, status_code=500)

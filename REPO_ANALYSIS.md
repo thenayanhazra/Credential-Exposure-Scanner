@@ -2,96 +2,102 @@
 
 ## Executive summary
 
-The project has a good architecture baseline for a lightweight OSINT scanner: target normalization is centralized, scanners are modular, and persistence has deterministic dedup behavior. The most impactful next step is improving operational resilience (timeouts/retries/transaction boundaries), then tightening documentation/config UX so contributors and operators can run it safely at scale.
-
-## What is already strong
-
-- **Clear execution pipeline** (`normalize` → scanner registry → `Runner` → `Store`).
-- **Robust scanner isolation**: scanner exceptions are swallowed per scanner so one failure does not break the whole scan.
-- **Deterministic dedup and ordering** in SQLite (`dedup_key` PK + `severity_rank` sorting).
-- **Healthy baseline tests** in the repo for runner, models, normalization, scanners, and store.
-
-## Findings from code review (high signal)
-
-### 1) Per-finding DB commits reduce throughput under concurrency (**High**)
-
-`Runner._run_one()` calls `self.store.upsert()` for every finding, and `Store.upsert()` commits on every call. This can create unnecessary lock churn and significantly slow scans when scanner output is large.
-
-**Where observed**
-- `src/credscan/runner.py` (`_run_one` inserts each finding one-by-one)
-- `src/credscan/store.py` (`upsert` ends with `self.conn.commit()`)
-
-**Recommendation**
-- Add batched writes per scanner run (`upsert_many(findings)`), committing once per batch.
-- Optionally keep per-finding commit behavior behind a "safe mode" config switch for debugging.
+The project has a solid architecture baseline: target normalization is centralized, scanners are modular, and persistence has deterministic dedup behaviour. This document tracks code-review findings, their severity, and their current resolution status.
 
 ---
 
-### 2) No scanner-level timeout/retry policy in runner contract (**High**)
+## Findings
 
-Runner catches exceptions but has no timeout envelope, so a scanner can hang indefinitely. There is also no standardized retry/backoff policy for transient HTTP failures.
+### 1. No scanner-level timeout in runner — **HIGH** — FIXED
 
-**Where observed**
-- `src/credscan/runner.py` (`asyncio.gather` with per-scanner tasks, no timeout wrapper)
+**Problem:** `asyncio.gather` ran scanner tasks with no time bound. A stuck HTTP connection could hold a semaphore slot indefinitely, blocking subsequent scans.
 
-**Recommendation**
-- Add per-scanner timeout config (e.g., `asyncio.timeout(...)`).
-- Introduce shared retry helper (exponential backoff + jitter) for scanner HTTP clients.
-- Record scanner execution metrics (`duration_ms`, `status`, `error_type`) in scan history.
+**Fix applied (`runner.py`):** Each `_run_one` call is now wrapped in `asyncio.timeout(self.scanner_timeout)`. Default is 120 seconds. Configurable via `[app] scanner_timeout` in config.
 
 ---
 
-### 3) Config loading is intentionally minimal but not validated (**Medium-High**)
+### 2. Backoff formula used wrong base — **MEDIUM** — FIXED
 
-`load_config()` returns raw TOML dict. This is simple, but malformed values can fail later or be silently ignored.
+**Problem:** `_BASE_DELAY**attempt` in `http.py` gave 1.0 s on the first retry (attempt=0), not the intended 2.0 s. Subsequent delays were also compressed relative to what `_BASE_DELAY = 2.0` implied.
 
-**Where observed**
-- `src/credscan/config.py`
-
-**Recommendation**
-- Add typed config validation (Pydantic/dataclass validators) for common keys.
-- Fail fast with clear diagnostics for invalid types/ranges (timeouts, limits, booleans).
-- Add `credscan doctor` to validate config and external connectivity safely.
+**Fix applied (`http.py`):** Changed to `_BASE_DELAY * (2**attempt)`, giving 2 s → 4 s → 8 s on successive retries. Both the network-error path and the transient-status-code path were corrected.
 
 ---
 
-### 4) README structure section is stale relative to codebase (**Medium**)
+### 3. OpenAI key regex missed the current key format — **MEDIUM** — FIXED
 
-The README includes paths/modules that are not present and omits actual current files.
+**Problem:** Pattern `sk-[A-Za-z0-9]{20,}` matched the old 51-character `sk-` prefix format only. OpenAI now issues `sk-proj-…` and `sk-svcacct-…` keys; the old pattern did not match these.
 
-**Where observed**
-- `README.md` repository layout section
-
-**Recommendation**
-- Keep layout section synchronized with current package tree.
-- Add a short “scanner dependency matrix” showing required APIs/keys and rate-limit expectations.
+**Fix applied (`scanners/_github.py`):** Updated to `sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}`, covering both legacy and current key formats.
 
 ---
 
-### 5) Scan history schema is useful but limited for observability (**Medium**)
+### 4. FastAPI app hardcoded a stale version string — **LOW** — FIXED
 
-Current `scans` table tracks only top-level scan start/finish/status/finding_count. There is no per-scanner telemetry, which makes performance tuning and incident debugging harder.
+**Problem:** `web.py` passed `version="0.1.0"` to `FastAPI(...)` while `pyproject.toml` declared `0.2.0`. The OpenAPI schema reported the wrong version.
 
-**Where observed**
-- `src/credscan/store.py` (`scans` schema and write paths)
+**Fix applied (`web.py`):** Version is now read from `credscan.__version__` (which itself reads from package metadata), so it stays in sync automatically.
 
-**Recommendation**
-- Add a `scan_runs` table: `(scan_id, scanner, started_at, finished_at, status, finding_count, error)`.
-- Surface these details in CLI and web UI for faster troubleshooting.
+---
+
+### 5. SQLite WAL mode not enabled — **LOW** — FIXED
+
+**Problem:** The default SQLite journal mode (DELETE) causes readers to block writers and vice versa. Under the web server, concurrent `/scan` and `/findings` requests could serialize unnecessarily.
+
+**Fix applied (`store.py`):** `PRAGMA journal_mode=WAL` is set on every new connection, allowing concurrent reads and a single writer without mutual blocking.
+
+---
+
+### 6. Per-finding DB commits reduce throughput under concurrency — **HIGH** — OPEN
+
+`Runner._run_one()` calls `store.upsert()` for every finding, and each `upsert` commits immediately. This creates unnecessary lock churn when scanner output is large.
+
+**Recommendation:** Add `upsert_many(findings)` that commits once per batch. Keep the current per-finding behaviour as a "safe mode" fallback for debugging.
+
+**Affected files:** `src/credscan/runner.py`, `src/credscan/store.py`
+
+---
+
+### 7. Config loading is unvalidated — **MEDIUM** — OPEN
+
+`load_config()` returns a raw TOML dict. Malformed values (wrong types, out-of-range integers) fail later with confusing errors or are silently ignored.
+
+**Recommendation:** Add typed validation (Pydantic or dataclass) for common keys. Add a `credscan doctor` CLI command to validate config and test external API connectivity.
+
+**Affected file:** `src/credscan/config.py`
+
+---
+
+### 8. Scan history has no per-scanner telemetry — **MEDIUM** — OPEN
+
+The `scans` table tracks only top-level start/finish/status/finding_count. There is no per-scanner breakdown, making performance tuning and incident debugging harder.
+
+**Recommendation:** Add a `scan_runs` table with columns `(scan_id, scanner, started_at, finished_at, status, finding_count, error)`. Surface per-scanner stats in the CLI and web UI.
+
+**Affected file:** `src/credscan/store.py`
+
+---
+
+### 9. `evidence_hash` field is never populated — **LOW** — OPEN
+
+`Finding.evidence_hash` exists in the model and in the SQLite schema, but no scanner sets it. It is stored as NULL in every row.
+
+**Recommendation:** Either populate it (SHA-256 of fetched raw file content) in scanners that fetch raw files, or remove the field and column until it has a defined use case.
+
+---
+
+### 10. DuckDuckGo HTML scraping is fragile — **LOW** — OPEN
+
+`dorks.py` parses DuckDuckGo's HTML response with a hardcoded CSS class regex (`result__a`). A DDG markup change silently breaks hit extraction with no error signal.
+
+**Recommendation:** Add a sanity-check assertion on parsed hit count; emit a warning log when zero hits are extracted on a query that returned HTTP 200 (possible markup change). Consider a fallback to another search endpoint.
 
 ---
 
 ## Prioritized roadmap
 
-1. **Resilience first (week 1):** scanner timeouts + retry helper + richer scanner status logging.
-2. **Performance next (week 2):** batched DB writes + optional SQLite WAL tuning.
-3. **Operator UX (week 3):** typed config validation + `credscan doctor` command.
-4. **Observability (week 4):** per-scanner run metrics persisted and exposed in API/CLI.
-5. **Docs hardening (continuous):** keep README structure/dependency sections aligned with implementation.
-
-## Low-effort, high-value quick wins
-
-- Add a default timeout value in config and apply it in runner immediately.
-- Add a `--fail-fast` CLI option to stop scan when critical scanners fail.
-- Emit one summary log per scanner (`scanner`, `count`, `duration`, `status`).
-- Add a short architecture flow block to README for new contributors.
+1. **Resilience (done):** per-scanner timeouts added; backoff formula fixed.
+2. **Performance:** batched DB writes per scanner run.
+3. **Operator UX:** typed config validation + `credscan doctor` command.
+4. **Observability:** per-scanner run metrics in DB, CLI, and web UI.
+5. **Robustness:** DDG scraper health checks; `evidence_hash` resolution.

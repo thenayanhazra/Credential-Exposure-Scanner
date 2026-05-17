@@ -38,7 +38,7 @@ async def get_with_retry(
             if attempt == retries:
                 log.warning("GET %s failed after %d attempt(s): %s", url, retries + 1, exc)
                 return None
-            await _sleep(min(_BASE_DELAY**attempt, _MAX_DELAY))
+            await _sleep(min(_BASE_DELAY * (2**attempt), _MAX_DELAY))
             continue
 
         if resp.status_code not in _TRANSIENT:
@@ -49,7 +49,7 @@ async def get_with_retry(
             return None
 
         header = resp.headers.get("Retry-After", "")
-        delay = float(header) if header.isdigit() else _BASE_DELAY**attempt
+        delay = float(header) if header.isdigit() else _BASE_DELAY * (2**attempt)
         delay = min(delay, _MAX_DELAY)
         log.debug("GET %s → %d, retrying in %.1fs", url, resp.status_code, delay)
         await _sleep(delay)
