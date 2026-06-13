@@ -226,15 +226,42 @@ form.addEventListener('submit', async (e) => {
                          findings.length + ' finding(s) from: ' +
                          escapeHtml(scannersRun) + '.</div>';
 
+    // Fetch and build scanner telemetry table
+    let telemetryHtml = '';
+    try {
+      const telResp = await fetch(`/scan/${data.scan_id}/telemetry`);
+      if (telResp.ok) {
+        const telData = await telResp.json();
+        const runs = telData.telemetry || [];
+        if (runs.length > 0) {
+          telemetryHtml = '<div style="margin-bottom: 1.5rem;"><div class="section-title" style="margin-top: 1rem;">Scanner Execution Telemetry</div>' +
+                          '<table><thead><tr><th>Scanner</th><th>Started</th><th>Finished</th><th>Status</th><th>Findings</th><th>Error</th></tr></thead><tbody>';
+          for (const r of runs) {
+            telemetryHtml += '<tr>' +
+                             '<td><code>' + escapeHtml(r.scanner) + '</code></td>' +
+                             '<td style="color: var(--muted); font-size: 0.8rem;">' + escapeHtml(r.started_at ? r.started_at.split('T')[1].slice(0, 8) : '') + '</td>' +
+                             '<td style="color: var(--muted); font-size: 0.8rem;">' + escapeHtml(r.finished_at ? r.finished_at.split('T')[1].slice(0, 8) : 'N/A') + '</td>' +
+                             '<td><span class="sev sev-' + (r.status === 'done' ? 'low' : 'critical') + '">' + escapeHtml(r.status) + '</span></td>' +
+                             '<td>' + escapeHtml(r.finding_count) + '</td>' +
+                             '<td style="color: var(--critical); font-size: 0.8rem;">' + escapeHtml(r.error || '') + '</td>' +
+                             '</tr>';
+          }
+          telemetryHtml += '</tbody></table></div>';
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch telemetry", e);
+    }
+
     if (findings.length === 0) {
-      resultsEl.innerHTML = '<div class="empty">No exposures found.</div>';
+      resultsEl.innerHTML = telemetryHtml + '<div class="empty">No exposures found.</div>';
       return;
     }
 
     findings.sort((a, b) =>
       SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity));
 
-    let html = '<table><thead><tr>' +
+    let html = telemetryHtml + '<div class="section-title">Findings</div><table><thead><tr>' +
                '<th>Severity</th><th>Source</th><th>Type</th>' +
                '<th>Title</th><th>Evidence</th></tr></thead><tbody>';
     for (const f of findings) {

@@ -1,4 +1,4 @@
-"""SQLite-backed findings and scan-history store.
+\"\"\"SQLite-backed findings and scan-history store.
 
 Schema notes
 ------------
@@ -8,7 +8,7 @@ Schema notes
 - Upsert is a single `INSERT ... ON CONFLICT(dedup_key) DO UPDATE`, which
   refreshes all mutable fields (title, severity, raw) while preserving
   `first_seen` via the table default.
-"""
+\"\"\"
 from __future__ import annotations
 
 import json
@@ -19,7 +19,7 @@ from typing import Any
 
 from .models import Finding, Severity
 
-SCHEMA = """
+SCHEMA = \"\"\"
 CREATE TABLE IF NOT EXISTS findings (
     dedup_key      TEXT PRIMARY KEY,
     source         TEXT NOT NULL,
@@ -46,10 +46,23 @@ CREATE TABLE IF NOT EXISTS scans (
     finding_count  INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_scans_target ON scans(target);
-"""
+
+CREATE TABLE IF NOT EXISTS scan_runs (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_id        INTEGER NOT NULL,
+    scanner        TEXT NOT NULL,
+    started_at     TEXT NOT NULL,
+    finished_at    TEXT,
+    status         TEXT NOT NULL,
+    finding_count  INTEGER NOT NULL DEFAULT 0,
+    error          TEXT,
+    FOREIGN KEY(scan_id) REFERENCES scans(id)
+);
+CREATE INDEX IF NOT EXISTS idx_scan_runs_scan_id ON scan_runs(scan_id);
+\"\"\"
 
 # INSERT; on conflict, do nothing. rowcount tells us whether we inserted.
-_INSERT_SQL = """
+_INSERT_SQL = \"\"\"
 INSERT INTO findings
     (dedup_key, source, target, kind, severity, severity_rank, title,
      evidence_url, evidence_hash, raw_json, first_seen, last_seen)
@@ -57,11 +70,11 @@ VALUES
     (:dedup_key, :source, :target, :kind, :severity, :severity_rank, :title,
      :evidence_url, :evidence_hash, :raw_json, :first_seen, :last_seen)
 ON CONFLICT(dedup_key) DO NOTHING
-"""
+\"\"\"
 
 # Refresh mutable fields when the row already existed. first_seen is never
 # overwritten.
-_UPDATE_SQL = """
+_UPDATE_SQL = \"\"\"
 UPDATE findings
 SET severity      = :severity,
     severity_rank = :severity_rank,
@@ -71,7 +84,7 @@ SET severity      = :severity,
     raw_json      = :raw_json,
     last_seen     = :last_seen
 WHERE dedup_key = :dedup_key
-"""
+\"\"\"
 
 
 def _now_iso() -> str:
@@ -79,7 +92,7 @@ def _now_iso() -> str:
 
 
 class Store:
-    """Thin SQLite wrapper. One instance per connection."""
+    \"\"\"Thin SQLite wrapper. One instance per connection.\"\"\"
 
     def __init__(self, path: Path | str):
         self.path = Path(path)
@@ -93,12 +106,12 @@ class Store:
     # --- findings ---
 
     def upsert(self, f: Finding) -> bool:
-        """Insert or refresh a finding. Returns True if this is a new row.
+        \"\"\"Insert or refresh a finding. Returns True if this is a new row.
 
         Attempts INSERT; on conflict, falls through to UPDATE. In the
         inserted-fresh case that's one statement; in the refresh case it's
         two. first_seen is never overwritten.
-        """
+        \"\"\"
         sev = Severity(f.severity)
         params = {
             "dedup_key": f.dedup_key(),
@@ -120,6 +133,38 @@ class Store:
             self.conn.execute(_UPDATE_SQL, params)
         self.conn.commit()
         return inserted
+
+    def upsert_many(self, findings: list[Finding]) -> int:
+        \"\"\"Insert or refresh multiple findings in a single transaction.
+
+        Returns the number of new findings inserted.
+        \"\"\"
+        if not findings:
+            return 0
+        new_count = 0
+        with self.conn:
+            for f in findings:
+                sev = Severity(f.severity)
+                params = {
+                    "dedup_key": f.dedup_key(),
+                    "source": f.source,
+                    "target": f.target,
+                    "kind": f.kind,
+                    "severity": sev.value,
+                    "severity_rank": sev.rank,
+                    "title": f.title,
+                    "evidence_url": f.evidence_url,
+                    "evidence_hash": f.evidence_hash,
+                    "raw_json": json.dumps(f.raw, default=str),
+                    "first_seen": f.first_seen.isoformat(),
+                    "last_seen": f.last_seen.isoformat(),
+                }
+                cur = self.conn.execute(_INSERT_SQL, params)
+                if cur.rowcount > 0:
+                    new_count += 1
+                else:
+                    self.conn.execute(_UPDATE_SQL, params)
+        return new_count
 
     def findings_for(self, target: str) -> list[dict[str, Any]]:
         cur = self.conn.execute(
@@ -145,6 +190,30 @@ class Store:
             (_now_iso(), status, finding_count, scan_id),
         )
         self.conn.commit()
+
+    def start_scanner_run(self, scan_id: int, scanner: str) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO scan_runs (scan_id, scanner, started_at, status) VALUES (?, ?, ?, 'running')",
+            (scan_id, scanner, _now_iso()),
+        )
+        self.conn.commit()
+        return cur.lastrowid or 0
+
+    def finish_scanner_run(
+        self, run_id: int, finding_count: int, status: str, error: str | None = None
+    ) -> None:
+        self.conn.execute(
+            "UPDATE scan_runs SET finished_at = ?, status = ?, finding_count = ?, error = ? WHERE id = ?",
+            (_now_iso(), status, finding_count, error, run_id),
+        )
+        self.conn.commit()
+
+    def get_scan_telemetry(self, scan_id: int) -> list[dict[str, Any]]:
+        cur = self.conn.execute(
+            "SELECT * FROM scan_runs WHERE scan_id = ? ORDER BY id ASC",
+            (scan_id,),
+        )
+        return [dict(r) for r in cur.fetchall()]
 
     def recent_scans(self, limit: int = 20) -> list[dict[str, Any]]:
         cur = self.conn.execute(
