@@ -1,7 +1,13 @@
-"""Runner: executes applicable scanners against a target with bounded concurrency."""
+\"\"\"Runner: executes applicable scanners against a target with bounded concurrency.\"\"\"
 from __future__ import annotations
 
 import asyncio
+import sys
+if sys.version_info >= (3, 11):
+    from asyncio import timeout as async_timeout_ctx
+else:
+    from async_timeout import timeout as async_timeout_ctx
+
 import logging
 
 from .models import Finding, ScanResult, Target
@@ -33,22 +39,31 @@ class Runner:
     def applicable(self, target: Target) -> list[Scanner]:
         return [s for s in self.scanners if s.enabled() and s.supports(target)]
 
-    async def _run_one(self, scanner: Scanner, target: Target) -> list[Finding]:
-        """Drive one scanner. Exceptions are caught so one bad scanner can't
-        poison the batch."""
+    async def _run_one(self, scanner: Scanner, target: Target, scan_id: int) -> list[Finding]:
+        \"\"\"Drive one scanner. Exceptions are caught so one bad scanner can't
+        poison the batch.\"\"\"
         out: list[Finding] = []
+        run_id = self.store.start_scanner_run(scan_id, scanner.name)
+        status = "done"
+        error_msg = None
         async with self.sem:
             try:
-                async with asyncio.timeout(self.scanner_timeout):
+                async with async_timeout_ctx(self.scanner_timeout):
                     async for finding in scanner.scan(target):
-                        self.store.upsert(finding)
                         out.append(finding)
-            except TimeoutError:
+                self.store.upsert_many(out)
+            except (asyncio.TimeoutError, TimeoutError):
+                status = "timeout"
+                error_msg = f"Timed out after {self.scanner_timeout}s"
                 log.warning(
                     "scanner %s timed out after %ds", scanner.name, self.scanner_timeout
                 )
             except Exception as e:  # noqa: BLE001
+                status = "failed"
+                error_msg = str(e)
                 log.warning("scanner %s failed: %s", scanner.name, e)
+            finally:
+                self.store.finish_scanner_run(run_id, len(out), status, error_msg)
         return out
 
     async def run(self, target: Target) -> ScanResult:
@@ -67,7 +82,7 @@ class Runner:
         # _run_one already swallows per-scanner exceptions, so gather() will
         # never raise from scanner errors. Any exception here is a bug in the
         # runner itself and should propagate.
-        batches = await asyncio.gather(*(self._run_one(s, target) for s in applicable))
+        batches = await asyncio.gather(*(self._run_one(s, target, scan_id) for s in applicable))
         findings = [f for batch in batches for f in batch]
         self.store.finish_scan(scan_id, len(findings), status="done")
 

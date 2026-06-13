@@ -91,11 +91,18 @@ credscan serve
 credscan serve --host 127.0.0.1 --port 8765
 ```
 
-View recent scan history:
+View recent scan history or scanner execution telemetry:
 
 ```bash
 credscan history
 credscan history --limit 50
+credscan history --scan-id 1
+```
+
+Validate configuration and test connectivity to external APIs:
+
+```bash
+credscan doctor
 ```
 
 ## Repository layout

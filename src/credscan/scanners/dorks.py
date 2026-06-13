@@ -1,12 +1,13 @@
-"""Search-engine dorks scanner.
+\"\"\"Search-engine dorks scanner.
 
 Runs a short list of targeted queries against DuckDuckGo's HTML endpoint.
 Experimental: DDG is rate-limited and may rewrite markup. Treat hits as
 leads to investigate, not confirmed exposures.
-"""
+\"\"\"
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import AsyncIterator, Callable
 from urllib.parse import urlencode
@@ -16,6 +17,8 @@ import httpx
 from ..http import get_with_retry
 from ..models import Finding, Severity, Target
 from .base import Scanner
+
+log = logging.getLogger(__name__)
 
 DORK_TEMPLATES = [
     '"{domain}" filetype:env',
@@ -37,6 +40,7 @@ BROWSER_UA = (
     "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
 )
 
+# Shared delay between DDG requests to avoid rate limits
 INTER_QUERY_DELAY = 0.4  # seconds; be polite
 
 _sleep: Callable[[float], object] = asyncio.sleep
@@ -61,11 +65,22 @@ class DorkScanner(Scanner):
                     await _sleep(INTER_QUERY_DELAY)
                 query = template.format(domain=target.domain)
                 resp = await get_with_retry(client, self.ENDPOINT, params={"q": query})
-                if resp is None or resp.status_code != 200:
+                if resp is None:
+                    log.warning("dorks: Request for query '%s' failed to return a response", query)
                     continue
+                if resp.status_code != 200:
+                    log.warning("dorks: Request for query '%s' returned HTTP status %d", query, resp.status_code)
+                    continue
+
+                if "ddg-captcha" in resp.text or "Security Check" in resp.text or "blocked" in resp.text.lower():
+                    log.warning("dorks: DuckDuckGo returned a CAPTCHA or security block page.")
+                    continue
+
                 unique_hits = list(dict.fromkeys(LINK_RE.findall(resp.text)))
                 if not unique_hits:
+                    log.warning("dorks: Query '%s' returned HTTP 200 but extracted 0 results. DDG markup may have changed.", query)
                     continue
+
                 yield Finding(
                     source=self.name,
                     target=str(target),

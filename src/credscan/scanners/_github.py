@@ -1,4 +1,4 @@
-"""Shared GitHub API helpers: headers, URL construction, secret pattern scanning."""
+\"\"\"Shared GitHub API helpers: headers, URL construction, secret pattern scanning.\"\"\"
 from __future__ import annotations
 
 import re
@@ -29,6 +29,31 @@ SECRET_PATTERNS: list[tuple[re.Pattern[str], str, Severity]] = [
         "api_key_literal",
         Severity.HIGH,
     ),
+    (
+        re.compile(r"https://hooks\.slack\.com/services/T[A-Z0-9_]{8}/B[A-Z0-9_]{8}/[A-Za-z0-9_]{24}"),
+        "slack_webhook",
+        Severity.HIGH,
+    ),
+    (
+        re.compile(r"AIza[0-9A-Za-z-_]{35}"),
+        "google_api_key",
+        Severity.HIGH,
+    ),
+    (
+        re.compile(r"sk_(?:live|test)_[0-9a-zA-Z]{24}"),
+        "stripe_api_key",
+        Severity.CRITICAL,
+    ),
+    (
+        re.compile(r"AC[0-9a-fA-F]{32}"),
+        "twilio_account_sid",
+        Severity.LOW,
+    ),
+    (
+        re.compile(r"(?:postgresql|postgres|mysql|mongodb|mongodb\+srv|redis)://[^:\s]+:[^@\s]+@[^\s]+"),
+        "db_connection_string",
+        Severity.CRITICAL,
+    ),
 ]
 
 CONTEXT_WINDOW = 240
@@ -51,12 +76,12 @@ def find_secrets(
     content: str,
     domain: str | None = None,
 ) -> Iterator[tuple[str, Severity]]:
-    """Yield (kind, severity) for each matching secret pattern.
+    \"\"\"Yield (kind, severity) for each matching secret pattern.
 
     If domain is given, only yield when the domain string appears within
     CONTEXT_WINDOW characters of the match (reduces false positives for broad
     searches). Omit domain to match any secret regardless of proximity.
-    """
+    \"\"\"
     lower = content.lower()
     domain_l = domain.lower() if domain else None
     for pat, kind, severity in SECRET_PATTERNS:
