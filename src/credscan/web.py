@@ -1,4 +1,4 @@
-"""FastAPI web GUI for credscan."""
+\"\"\"FastAPI web GUI for credscan.\"\"\"
 from __future__ import annotations
 
 import logging
@@ -21,11 +21,11 @@ log = logging.getLogger(__name__)
 
 
 def create_app(db_path: Path | None = None) -> FastAPI:
-    """Build the FastAPI app.
+    \"\"\"Build the FastAPI app.
 
     `db_path` defaults to the configured location. Pass an override for tests
     or for multi-instance deployments.
-    """
+    \"\"\"
     app = FastAPI(title="credscan", version=__version__)
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
     resolved_db = db_path or default_db_path()
@@ -76,6 +76,12 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         with _open_store() as store:
             items = store.findings_for(target)
         return JSONResponse({"findings": items})
+
+    @app.get("/scan/{scan_id}/telemetry")
+    async def telemetry(scan_id: int) -> JSONResponse:
+        with _open_store() as store:
+            items = store.get_scan_telemetry(scan_id)
+        return JSONResponse({"telemetry": items})
 
     @app.get("/health")
     async def health() -> dict[str, str]:

@@ -1,4 +1,4 @@
-"""Lead fetch scanner.
+\"\"\"Lead fetch scanner.
 
 Searches GitHub for the target (domain or email) in credential-dense file types
 (.env, .log, .cfg, .ini) and applies SECRET_PATTERNS to the raw file content.
@@ -6,7 +6,7 @@ Searches GitHub for the target (domain or email) in credential-dense file types
 `max_pages` controls how many search result pages (30 items/page) are consumed.
 Raw-file fetches are capped at `max_pages * 5` to bound HTTP request volume
 (~60 requests at the default of 10 pages).
-"""
+\"\"\"
 from __future__ import annotations
 
 import os
@@ -81,6 +81,9 @@ class LeadFetchScanner(Scanner):
                 if raw_resp is None or raw_resp.status_code != 200:
                     continue
 
+                from hashlib import sha256
+                evidence_hash = sha256(raw_resp.text.encode("utf-8")).hexdigest()
+
                 # No domain proximity check: the file was found because it
                 # matched the target query, so any secret in it is relevant.
                 for kind, severity in find_secrets(raw_resp.text):
@@ -95,5 +98,6 @@ class LeadFetchScanner(Scanner):
                         severity=severity,
                         title=f"Possible {kind} in sensitive file {repo}/{path}",
                         evidence_url=html_url,
+                        evidence_hash=evidence_hash,
                         raw={"repo": repo, "path": path, "pattern": kind},
                     )

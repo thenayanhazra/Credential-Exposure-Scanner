@@ -1,9 +1,9 @@
-"""Exact email address search on GitHub.
+\"\"\"Exact email address search on GitHub.
 
 Searches public GitHub code for the exact email address string. Findings in
 sensitive file paths (e.g. .env, credentials, db.sql) are HIGH; others MEDIUM.
 Requires a GitHub personal access token.
-"""
+\"\"\"
 from __future__ import annotations
 
 import os
@@ -73,6 +73,9 @@ class ExactEmailSearchScanner(Scanner):
                 if raw_resp is None or raw_resp.status_code != 200:
                     continue
 
+                from hashlib import sha256
+                evidence_hash = sha256(raw_resp.text.encode("utf-8")).hexdigest()
+
                 severity = (
                     Severity.HIGH if _SENSITIVE_PATH_RE.search(path) else Severity.MEDIUM
                 )
@@ -83,5 +86,6 @@ class ExactEmailSearchScanner(Scanner):
                     severity=severity,
                     title=f"Email address found in public repo: {repo}/{path}",
                     evidence_url=html_url,
+                    evidence_hash=evidence_hash,
                     raw={"repo": repo, "path": path},
                 )

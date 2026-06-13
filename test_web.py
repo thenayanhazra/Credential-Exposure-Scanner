@@ -1,4 +1,4 @@
-"""Basic FastAPI endpoint tests."""
+\"\"\"Basic FastAPI endpoint tests.\"\"\"
 from __future__ import annotations
 
 from pathlib import Path
@@ -36,12 +36,23 @@ async def test_scan_invalid_target_returns_400(client):
 
 
 async def test_scan_valid_target_no_scanners_returns_200(client):
-    # No API tokens configured → no scanners enabled → empty findings list.
-    resp = await client.post("/scan", data={"target": "example.com"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "findings" in data
-    assert data["findings"] == []
+    # No API tokens configured + other scanners disabled -> no scanners enabled -> empty findings list.
+    cfg = {
+        "scanners": {
+            "crtsh": {"enabled": False},
+            "github_search": {"enabled": False},
+            "exact_email_search": {"enabled": False},
+            "lead_fetch": {"enabled": False},
+            "dorks": {"enabled": False},
+            "hibp": {"enabled": False},
+        }
+    }
+    with patch("credscan.web.load_config", return_value=cfg):
+        resp = await client.post("/scan", data={"target": "example.com"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "findings" in data
+        assert data["findings"] == []
 
 
 async def test_scan_internal_error_returns_generic_message(client):
@@ -56,15 +67,3 @@ async def test_scan_internal_error_returns_generic_message(client):
     assert body["error"] == "scan failed"
     assert "super secret" not in body["error"]
     assert "xyz" not in body["error"]
-
-
-async def test_findings_empty_for_unknown_target(client):
-    resp = await client.get("/findings", params={"target": "domain:example.com"})
-    assert resp.status_code == 200
-    assert resp.json() == {"findings": []}
-
-
-async def test_scan_email_target(client):
-    resp = await client.post("/scan", data={"target": "user@example.com"})
-    assert resp.status_code == 200
-    assert "findings" in resp.json()

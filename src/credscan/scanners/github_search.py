@@ -1,8 +1,8 @@
-"""GitHub code search scanner.
+\"\"\"GitHub code search scanner.
 
 Searches public code for occurrences of the target domain alongside common
 credential patterns. Requires a free personal access token (read-only).
-"""
+\"\"\"
 from __future__ import annotations
 
 import os
@@ -61,6 +61,9 @@ class GitHubSearchScanner(Scanner):
                 if raw_resp is None or raw_resp.status_code != 200:
                     continue
 
+                from hashlib import sha256
+                evidence_hash = sha256(raw_resp.text.encode("utf-8")).hexdigest()
+
                 for kind, severity in find_secrets(raw_resp.text, domain=target.domain):
                     dedup = f"{repo}|{path}|{kind}"
                     if dedup in seen:
@@ -73,5 +76,6 @@ class GitHubSearchScanner(Scanner):
                         severity=severity,
                         title=f"Possible {kind} exposure in {repo}/{path}",
                         evidence_url=html_url,
+                        evidence_hash=evidence_hash,
                         raw={"repo": repo, "path": path, "pattern": kind},
                     )
